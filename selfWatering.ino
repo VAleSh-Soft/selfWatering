@@ -33,106 +33,107 @@ ChannelState channels[3] = {channel_1, channel_2, channel_3};
 CRGB leds[4];
 
 // ===================================================
-void runChanel(byte index, bool force)
+void runChanel()
 {
-  static bool _force = force;
+  // если таймер полива каналов еще не запущен, запустить его
   if (!tasks.getTaskState(run_channel))
-  { // если таймер каналов полива еще не запущен, запустить его
+  {
     tasks.startTask(run_channel);
-    channels[index].min_max_timer++;
-
-    if (channels[index].metering_flag == SNS_NONE)
-    {
-      if (_force || channels[index].min_max_timer >= MIN_TIMER * 4)
-      // продолжить только если прошло минимальное количество суток или задан принудительный старт
+  }
+  // если канал еще не в рабочем режиме, перевести его в рабочий режим
+  if (!channels[curChannel].channel_state == CNL_WORK)
+  {
+    if (channels[curChannel].channel_state == CNL_DONE)
+    { // и попутно увеличить счетчик срабатывания
+      channels[curChannel].min_max_count++;
+    }
+    channels[curChannel].channel_state = CNL_WORK;
+    // если датчик еще в состоянии покоя, включить его и настроить канал на работу
+    if (channels[curChannel].metering_flag == SNS_NONE)
+    { // продолжить только если прошло минимальное количество суток и в светлое время
+      if (channels[curChannel].min_max_count >= MIN_TIMER * 4 && analogRead(LIGHT_SENSOR_PIN) > 300)
       {
-        channels[index].p_timer = 0;
-        if (_force || channels[index].min_max_timer >= MAX_TIMER * 4)
-        { // если задан принудительный старт или прошло максимальное количество суток, запустить полив без замера влажности
-          channels[index].metering_flag = SNS_WATERING;
+        channels[curChannel].p_count = 0;
+        // если прошло максимальное количество дней, включить полив без замера влажности
+        if (channels[curChannel].min_max_count >= MAX_TIMER * 4)
+        {
+          channels[curChannel].metering_flag = SNS_WATERING;
         }
         else
-        {
-          if (analogRead(LIGHT_SENSOR_PIN) > 300) // иначе включить датчик и режим измерения; но только в светлое время суток, чтобы не создавать шума ночью
-          {
-            channels[index].metering_flag = SNS_METERING;
-            digitalWrite(channels[index].p_sensor_pin, HIGH);
-            channels[index].m_count = 0;
-          }
-          else
-          {
-            channels[index].metering_flag = SNS_NONE;
-          }
+        { // иначе включить режим измерения влажности
+          channels[curChannel].metering_flag = SNS_METERING;
+          digitalWrite(channels[curChannel].p_sensor_pin, HIGH);
+          channels[curChannel].m_count = 0;
         }
+      }
+      else
+      {
+        channels[curChannel].metering_flag = SNS_NONE;
+        channels[curChannel].channel_state = CNL_DONE;
       }
     }
   }
   else
-  { // если таймер уже запущен, то действовать по флагу состояния датчика: замер влажности, полив или остановка таймера
-    switch (channels[index].metering_flag)
+  { // если канал уже запущен, то действовать по флагу состояния датчика: замер влажности, полив или остановка таймера, если обработаны все каналы
+    switch (channels[curChannel].metering_flag)
     {
     case SNS_METERING:
-      cnlMetering(index);
+      cnlMetering();
       break;
     case SNS_WATERING:
-      cnlWatering(index);
+      cnlWatering();
       break;
     default:
-      if (++index >= 3)
+      if (++curChannel >= 3)
       {
-        index = 0;
         tasks.stopTask(run_channel);
+        curChannel = 0;
       }
-      curChannel = index;
       break;
     }
   }
 }
 
-void cnlMetering(byte index)
+void cnlMetering()
 {
-  if (!digitalRead(channels[index].p_sensor_pin))
+  if (!digitalRead(channels[curChannel].p_sensor_pin))
   { // на всякий случай
-    digitalWrite(channels[index].p_sensor_pin, HIGH);
-    channels[index].m_count = 0;
+    digitalWrite(channels[curChannel].p_sensor_pin, HIGH);
   }
   else
   {
     // сделать восемь замеров
     static word p = 0;
-    p += analogRead(channels[index].d_sensor_pin);
-    if (++channels[index].m_count >= METERING_COUNT)
+    p += analogRead(channels[curChannel].d_sensor_pin);
+    if (++channels[curChannel].m_count >= METERING_COUNT)
     { // потом отключить питание датчика и вычислить среднее значение
-      digitalWrite(channels[index].p_sensor_pin, LOW);
-      channels[index].metering_flag = SNS_NONE;
+      digitalWrite(channels[curChannel].p_sensor_pin, LOW);
+      channels[curChannel].m_count = 0;
+      channels[curChannel].metering_flag = SNS_NONE;
       p /= METERING_COUNT;
       // определиться с дальнейшими действиями
-      switch (channels[index].channel_state)
+      switch (channels[curChannel].channel_state)
       {
       // если после простоя сухо, включить режим полива
-      case CNL_DONE:
+      case CNL_WORK:
         if (p >= 1000)
         {
-          channels[index].channel_state = CNL_WORK;
-          channels[index].metering_flag = SNS_WATERING;
+          channels[curChannel].metering_flag = SNS_WATERING;
         }
         break;
-      // если после полива влажность недостаточна, включить ошибку и сигнализатор, иначе считать задачу выполненной и остановить таймер канала
-      case CNL_WORK:
-      case CNL_ERROR:
+      // если после полива влажность недостаточна, включить ошибку и сигнализатор, иначе считать задачу выполненной и завершить полив канала
+      case CNL_CHECK:
         if (p > 300)
         {
-          channels[index].channel_state = CNL_ERROR;
-          if (!tasks.getTaskState(buzzer_on))
-          {
-            runBuzzer();
-          }
+          channels[curChannel].channel_state = CNL_ERROR;
+          // перезапустить пищалку, чтобы пропищало после ошибки полива в каждом канале
+          tasks.stopTask(buzzer_on);
+          runBuzzer();
         }
         else
         {
-          channels[index].channel_state = CNL_DONE;
-          channels[index].metering_flag = SNS_NONE;
-          channels[index].min_max_timer = 0;
+          channels[curChannel].channel_state = CNL_DONE;
+          channels[curChannel].min_max_count = 0;
         }
         break;
       }
@@ -141,55 +142,73 @@ void cnlMetering(byte index)
   }
 }
 
-void cnlWatering(byte index)
+void cnlWatering()
 {
   if (digitalRead(WATER_LEVEL_SENSOR_PIN))
   { // если вода есть, включить помпу и поливать, пока не истечет заданное время
-    digitalWrite(channels[index].pump_pin, HIGH);
-    if (++channels[index].p_timer >= PUMP_TIMER * 10)
+    digitalWrite(channels[curChannel].pump_pin, HIGH);
+    if (++channels[curChannel].p_count >= PUMP_TIMER * 10)
     { // если время истекло, остановить помпу и включить режим измерения
-      digitalWrite(channels[index].pump_pin, LOW);
-      channels[index].metering_flag = SNS_METERING;
+      digitalWrite(channels[curChannel].pump_pin, LOW);
+      channels[curChannel].metering_flag = SNS_METERING;
+      channels[curChannel].channel_state = CNL_CHECK;
+      channels[curChannel].p_count = 0;
     }
   }
   else
   { // если воды нет, остановить помпу и включить сигнализатор, если он еще не запущен
-    digitalWrite(channels[index].pump_pin, LOW);
-    if (!tasks.getTaskState(buzzer_on))
-    {
-      runBuzzer();
-    }
+    digitalWrite(channels[curChannel].pump_pin, LOW);
+    // перезапустить пищалку, чтобы пропищало сразу
+    tasks.stopTask(buzzer_on);
+    runBuzzer();
+  }
+}
+
+byte getErrors()
+{
+  byte result = 0;
+  for (byte i = 0; i < 4; i++)
+  {
+    bool f = (i == 0) ? digitalRead(WATER_LEVEL_SENSOR_PIN) : tasks.getTaskState(channels[i - 1].channel_state) == CNL_ERROR;
+    (f) ? (result) |= (1UL << (f)) : (result) &= ~(1UL << (f));
+  }
+  return (result);
+}
+
+void manualStart(byte flag, bool run)
+{
+  for (byte i = 0; i < 3; i++)
+  {
+    channels[i].channel_state = CNL_DONE;
+    channels[i].metering_flag = flag;
+  }
+  tasks.stopTask(buzzer_on);
+  tasks.startTask(leds_guard);
+  if (run)
+  {
+    curChannel = 0;
+    tasks.startTask(run_channel);
   }
 }
 
 // ===================================================
 void mainTimer()
 {
-  curChannel = 0;
-  runChanel(curChannel);
-}
-
-void runPump()
-{
-  runChanel(curChannel);
+  manualStart(SNS_NONE);
 }
 
 void setLeds()
 {
   static byte n = 0;
-  // индикатор датчика уровня воды
-  if (digitalRead(WATER_LEVEL_SENSOR_PIN))
+  // индикатор датчика уровня воды подмигивает каждые две секунды зеленым, если вода есть и красным, если воды нет
+  leds[0] = (digitalRead(WATER_LEVEL_SENSOR_PIN)) ? CRGB::Green : CRGB::Red;
+  if (n >= 19)
   {
-    leds[0] = CRGB::Green;
-    n = 0;
+    leds[0] = CRGB::Black;
   }
-  else
-  { // при срабатывании датчика индикатор светит красным и подмигивает каждые две секунды
-    leds[0] = (n < 20) ? CRGB::Red : CRGB::Black;
-    if (++n > 20)
-    {
-      n = 0;
-    }
+  if (++n > 19)
+  {
+    n = 0;
   }
 
   // индикаторы каналов
@@ -201,6 +220,7 @@ void setLeds()
       leds[i + 1] = CRGB::Red;
       break;
     case CNL_WORK:
+    case CNL_CHECK:
       leds[i + 1] = digitalRead(channels[i].pump_pin) ? CRGB::Green : CRGB::Orange;
       break;
     default:
@@ -220,10 +240,18 @@ void runBuzzer()
       {50, 100, 50, 500, 50, 100, 50, 500, 50, 100, 50, BUZZER_TIMEOUT * 1000ul}};
   static CRGB _leds[4];
 
+  // если таймер пищалки еще не запущен, запустить его, иначе проверить на наличие ошибок и, если ошибок уже нет, остановить таймер
   if (!tasks.getTaskState(buzzer_on))
   {
     n = 0;
     tasks.startTask(buzzer_on);
+  }
+  else if (!getErrors())
+  {
+    tasks.stopTask(buzzer_on);
+    n = 0;
+    // возвращаем управление индикаторами
+    tasks.startTask(leds_guard);
   }
   // перехватываем управление индикаторами, чтобы в момент писка нужные индикаторы проблескивали белым цветом
   tasks.stopTask(leds_guard);
@@ -279,6 +307,7 @@ void setup()
   // ==== настройка кнопки =============================
   btn.setLongClickMode(LCM_ONLYONCE);
   btn.setVirtualClickOn(true);
+  btn.setTimeout(1000);
 
   // ==== настройка пинов ==============================
   pinMode(WATER_LEVEL_SENSOR_PIN, INPUT_PULLUP);
@@ -292,7 +321,7 @@ void setup()
 
   // ==== настройка задач ==============================
   main_timer = tasks.addTask(21600000, mainTimer);     // главный таймер - интервал 6 часов
-  run_channel = tasks.addTask(100, runPump);           // таймер первого канала
+  run_channel = tasks.addTask(100, runChanel);         // таймер работы с каналами
   leds_guard = tasks.addTask(100, setLeds);            // управление индикаторами
   buzzer_on = tasks.addTask(300000, runBuzzer, false); // таймер пищалки
 }
@@ -303,18 +332,26 @@ void loop()
 
   switch (btn.getButtonState())
   {
-  case BTN_LONGCLICK:
-    for (byte i = 0; i < 3; i++)
+  // при коротком клике остановить пищалку и сбросить ошибки по каналам
+  case BTN_ONECLICK:
+    if (tasks.getTaskState(buzzer_on) && !tasks.getTaskState(run_channel))
     {
-      // if (!tasks.getTaskState(channel_timers[i]))
-      // {
-      //   runChanel(i, true);
-      // }
+      manualStart(SNS_NONE, false);
     }
     break;
-  case BTN_ONECLICK:
-    tasks.stopTask(buzzer_on);
-    tasks.startTask(leds_guard);
+  // при двойном клике запустить полив с замером влажности
+  case BTN_DBLCLICK:
+    if (!tasks.getTaskState(run_channel))
+    {
+      manualStart(SNS_METERING);
+    }
+    break;
+  // при длинном клике запустить полив без замера влажности
+  case BTN_LONGCLICK:
+    if (!tasks.getTaskState(run_channel))
+    {
+      manualStart(SNS_WATERING);
+    }
     break;
   }
 }

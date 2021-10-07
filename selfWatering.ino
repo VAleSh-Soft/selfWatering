@@ -84,6 +84,10 @@ void runChanel()
       cnlWatering();
       break;
     default:
+      if (channels[curChannel].channel_state != CNL_ERROR)
+      {
+        channels[curChannel].channel_state = CNL_DONE;
+      }
       if (++curChannel >= 3)
       {
         tasks.stopTask(run_channel);
@@ -181,6 +185,12 @@ void manualStart(byte flag, bool run)
   {
     channels[i].channel_state = CNL_DONE;
     channels[i].metering_flag = flag;
+    if (!run)
+    { // на случай если в момент остановки идет полив
+      digitalWrite(channels[i].pump_pin, LOW);
+      digitalWrite(channels[i].p_sensor_pin, LOW);
+      tasks.stopTask(run_channel);
+    }
   }
   tasks.stopTask(buzzer_on);
   tasks.startTask(leds_guard);
@@ -346,9 +356,13 @@ void loop()
       manualStart(SNS_METERING);
     }
     break;
-  // при длинном клике запустить полив без замера влажности
+  // при длинном клике запустить полив без замера влажности или остановить полив, если он в текущий момент идет.
   case BTN_LONGCLICK:
-    if (!tasks.getTaskState(run_channel))
+    if (tasks.getTaskState(run_channel))
+    {
+      manualStart(SNS_NONE, false);
+    }
+    else
     {
       manualStart(SNS_WATERING);
     }

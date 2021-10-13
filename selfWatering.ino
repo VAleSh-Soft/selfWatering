@@ -41,12 +41,10 @@ void runChanel()
     tasks.startTask(run_channel);
   }
   // если канал еще не в рабочем режиме, перевести его в рабочий режим
-  if (!channels[curChannel].channel_state == CNL_WORK)
+  if (channels[curChannel].channel_state == CNL_DONE)
   {
-    if (channels[curChannel].channel_state == CNL_DONE)
-    { // и попутно увеличить счетчик срабатывания
-      channels[curChannel].min_max_count++;
-    }
+    // и попутно увеличить счетчик срабатывания
+    channels[curChannel].min_max_count++;
     channels[curChannel].channel_state = CNL_WORK;
     // если датчик еще в состоянии покоя, включить его и настроить канал на работу
     if (channels[curChannel].metering_flag == SNS_NONE)
@@ -69,7 +67,6 @@ void runChanel()
       else
       {
         channels[curChannel].metering_flag = SNS_NONE;
-        channels[curChannel].channel_state = CNL_DONE;
       }
     }
   }
@@ -106,7 +103,7 @@ void cnlMetering()
   }
   else
   {
-    // сделать восемь замеров
+    // сделать восемь замеров - METERING_COUNT == 8
     static word p = 0;
     p += analogRead(channels[curChannel].d_sensor_pin);
     if (++channels[curChannel].m_count >= METERING_COUNT)
@@ -125,7 +122,7 @@ void cnlMetering()
           channels[curChannel].metering_flag = SNS_WATERING;
         }
         break;
-      // если после полива влажность недостаточна, включить ошибку и сигнализатор, иначе считать задачу выполненной и завершить полив канала
+      // если после полива влажность недостаточна, включить ошибку и сигнализатор, иначе считать задачу выполненной и обнулить счетчик пустых циклов
       case CNL_CHECK:
         if (p > 300)
         {
@@ -136,7 +133,6 @@ void cnlMetering()
         }
         else
         {
-          channels[curChannel].channel_state = CNL_DONE;
           channels[curChannel].min_max_count = 0;
         }
         break;
@@ -160,7 +156,7 @@ void cnlWatering()
     }
   }
   else
-  { // если воды нет, остановить помпу и включить сигнализатор, если он еще не запущен
+  { // если воды нет, остановить помпу
     digitalWrite(channels[curChannel].pump_pin, LOW);
     // перезапустить пищалку, чтобы пропищало сразу
     tasks.stopTask(buzzer_on);

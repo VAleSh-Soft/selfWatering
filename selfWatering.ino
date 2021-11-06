@@ -112,6 +112,10 @@ void cnlMetering()
       channels[curChannel].m_count = 0;
       channels[curChannel].metering_flag = SNS_NONE;
       p /= METERING_COUNT;
+#ifdef LOG_ON
+      channels[curChannel].m_data = p;
+      printMeteringData(curChannel);
+#endif
       // определиться с дальнейшими действиями
       switch (channels[curChannel].channel_state)
       {
@@ -305,37 +309,8 @@ void runBuzzer()
 
 // ===================================================
 
-void setup()
+void checkButton()
 {
-  FastLED.addLeds<WS2812B, LEDS_PIN, GRB>(leds, 4);
-  FastLED.setBrightness(50);
-
-  // ==== настройка кнопки =============================
-  btn.setLongClickMode(LCM_ONLYONCE);
-  btn.setVirtualClickOn(true);
-  btn.setTimeout(1000);
-
-  // ==== настройка пинов ==============================
-  pinMode(WATER_LEVEL_SENSOR_PIN, INPUT_PULLUP);
-  pinMode(BUZZER_PIN, OUTPUT);
-  pinMode(HPOWER_1_SENSOR_PIN, OUTPUT);
-  pinMode(PUMP_1_PIN, OUTPUT);
-  pinMode(HPOWER_2_SENSOR_PIN, OUTPUT);
-  pinMode(PUMP_2_PIN, OUTPUT);
-  pinMode(HPOWER_3_SENSOR_PIN, OUTPUT);
-  pinMode(PUMP_3_PIN, OUTPUT);
-
-  // ==== настройка задач ==============================
-  main_timer = tasks.addTask(21600000, mainTimer);     // главный таймер - интервал 6 часов
-  run_channel = tasks.addTask(100, runChanel);         // таймер работы с каналами
-  leds_guard = tasks.addTask(100, setLeds);            // управление индикаторами
-  buzzer_on = tasks.addTask(300000, runBuzzer, false); // таймер пищалки
-}
-
-void loop()
-{
-  tasks.tick();
-
   switch (btn.getButtonState())
   {
   // при коротком клике остановить пищалку и сбросить ошибки по каналам
@@ -365,3 +340,114 @@ void loop()
     break;
   }
 }
+
+// ===================================================
+
+void setup()
+{
+#ifdef LOG_ON
+  Serial.begin(9600);
+#endif
+
+  FastLED.addLeds<WS2812B, LEDS_PIN, GRB>(leds, 4);
+  FastLED.setBrightness(50);
+
+  // ==== настройка кнопки =============================
+  btn.setLongClickMode(LCM_ONLYONCE);
+  btn.setVirtualClickOn(true);
+  btn.setTimeout(1000);
+
+  // ==== настройка пинов ==============================
+  pinMode(WATER_LEVEL_SENSOR_PIN, INPUT_PULLUP);
+  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(HPOWER_1_SENSOR_PIN, OUTPUT);
+  pinMode(PUMP_1_PIN, OUTPUT);
+  pinMode(HPOWER_2_SENSOR_PIN, OUTPUT);
+  pinMode(PUMP_2_PIN, OUTPUT);
+  pinMode(HPOWER_3_SENSOR_PIN, OUTPUT);
+  pinMode(PUMP_3_PIN, OUTPUT);
+
+  // ==== настройка задач ==============================
+  main_timer = tasks.addTask(21600000, mainTimer);     // главный таймер - интервал 6 часов
+  run_channel = tasks.addTask(100, runChanel);         // таймер работы с каналами
+  leds_guard = tasks.addTask(100, setLeds);            // управление индикаторами
+  buzzer_on = tasks.addTask(300000, runBuzzer, false); // таймер пищалки
+}
+
+void loop()
+{
+  tasks.tick();
+  checkButton();
+#ifdef LOG_ON
+  checkSerial();
+#endif
+}
+
+// ===================================================
+
+#ifdef LOG_ON
+
+void checkSerial()
+{
+  if (Serial.available())
+  {
+    int inByte = Serial.read();
+    Serial.println(inByte);
+    for (byte i = 0; i < 3; i++)
+    {
+      switch (inByte)
+      {
+      case 49: // '1'
+        printChannelStatus(i);
+        break;
+      default:
+        printMeteringData(i);
+        break;
+      }
+    }
+  }
+}
+
+void printMeteringData(byte cnl)
+{
+  Serial.print("Metering data, channel ");
+  Serial.print(cnl);
+  Serial.print(": ");
+  Serial.println(channels[cnl].m_data);
+}
+
+void printChannelStatus(byte cnl)
+{
+  Serial.print("Status data, channel ");
+  Serial.println(cnl);
+  Serial.print("Channel state: "); // текущий статус канала
+  switch (channels[cnl].channel_state)
+  {
+  case CNL_DONE:
+    Serial.println("CNL_DONE");
+    break;
+  case CNL_WORK:
+    Serial.println("CNL_WORK");
+    break;
+  case CNL_ERROR:
+    Serial.println("CNL_ERROR");
+    break;
+  case CNL_CHECK:
+    Serial.println("CNL_CHECK");
+    break;
+  default:
+    Serial.println("unknown");
+    break;
+  }
+  Serial.print("Cycles count: "); // количество прошедших шестичасовых циклов
+  Serial.println(channels[cnl].min_max_count);
+  Serial.print("Next point in "); // осталось времени до следующего цикла, час/мин
+  uint32_t x = tasks.getNextTaskPoint(main_timer);
+  Serial.print(x / 3600000);
+  Serial.print(" hour, ");
+  Serial.print(x % 3600000 / 60000);
+  Serial.println(" min");
+  Serial.println();
+}
+
+#endif

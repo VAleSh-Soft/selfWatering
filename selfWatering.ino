@@ -4,11 +4,12 @@
 #include "selfWatering.h"
 
 // ==== настройки ====================================
-#define MAX_TIMER 21       // максимальное количество суток, по истечении которого полив будет включен безусловно
-#define MIN_TIMER 7        // минимальное количество суток, до истечения которого полив не будет включен
-#define PUMP_TIMER 10      // время работы помпы в секундах во время полива
-#define METERING_COUNT 8   // количество замеров влажности для усреднения результата; желательно задавать значение, равное степени числа 2 (2, 4, 8, 16 и т.д.)
-#define BUZZER_TIMEOUT 300 // интервал срабатывания пищалки в режиме "ошибка" в секундах
+#define MAX_TIMER 14               // максимальное количество суток, по истечении которого полив будет включен безусловно
+#define MIN_TIMER 7                // минимальное количество суток, до истечения которого полив не будет включен
+#define PUMP_TIMER 10              // время работы помпы в секундах во время полива
+#define METERING_COUNT 8           // количество замеров влажности для усреднения результата; желательно задавать значение, равное степени числа 2 (2, 4, 8, 16 и т.д.)
+#define BUZZER_TIMEOUT 300         // интервал срабатывания пищалки в режиме "ошибка" в секундах
+#define LIGHT_SENSOR_THRESHOLD 150 // минимальные показания датчика света (0-1023)
 // ===================================================
 
 shTaskManager tasks(4); // создаем список задач
@@ -43,13 +44,16 @@ void runChanel()
   // если канал еще не в рабочем режиме, перевести его в рабочий режим
   if (channels[curChannel].channel_state == CNL_DONE)
   {
-    // и попутно увеличить счетчик срабатывания
-    channels[curChannel].min_max_count++;
+    // и попутно увеличить счетчик срабатывания, если это не ручной запуск; при первом запуске счетчик увеличить в любом случае
+    if (channels[curChannel].metering_flag == SNS_NONE || channels[curChannel].min_max_count == 0)
+    {
+      channels[curChannel].min_max_count++;
+    }
     channels[curChannel].channel_state = CNL_WORK;
     // если датчик еще в состоянии покоя, включить его и настроить канал на работу
     if (channels[curChannel].metering_flag == SNS_NONE)
     { // продолжить только если прошло минимальное количество суток и в светлое время
-      if (channels[curChannel].min_max_count >= MIN_TIMER * 4 && analogRead(LIGHT_SENSOR_PIN) > 300)
+      if (channels[curChannel].min_max_count >= MIN_TIMER * 4 && analogRead(LIGHT_SENSOR_PIN) > LIGHT_SENSOR_THRESHOLD)
       {
         channels[curChannel].p_count = 0;
         // если прошло максимальное количество дней, включить полив без замера влажности
@@ -121,7 +125,7 @@ void cnlMetering()
       {
       // если после простоя сухо, включить режим полива
       case CNL_WORK:
-        if (p >= 950)
+        if (p >= 500)
         {
           channels[curChannel].metering_flag = SNS_WATERING;
         }
@@ -393,6 +397,9 @@ void checkSerial()
   {
     int inByte = Serial.read();
     Serial.println(inByte);
+    Serial.print("Light sensor data: "); // показания датчика света
+    Serial.println(analogRead(LIGHT_SENSOR_PIN));
+    Serial.println();
     for (byte i = 0; i < 3; i++)
     {
       switch (inByte)

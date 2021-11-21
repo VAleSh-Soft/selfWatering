@@ -79,10 +79,11 @@ void runChanel()
     switch (channels[curChannel].metering_flag)
     {
     case SNS_METERING:
-      cnlMetering();
+    case SNS_TESTING:
+      cnlMetering(curChannel);
       break;
     case SNS_WATERING:
-      cnlWatering();
+      cnlWatering(curChannel);
       break;
     default:
       if (channels[curChannel].channel_state != CNL_ERROR)
@@ -99,73 +100,78 @@ void runChanel()
   }
 }
 
-void cnlMetering()
+void cnlMetering(byte channel)
 {
-  if (!digitalRead(channels[curChannel].p_sensor_pin))
+  if (!digitalRead(channels[channel].p_sensor_pin))
   { // на всякий случай
-    digitalWrite(channels[curChannel].p_sensor_pin, HIGH);
+    digitalWrite(channels[channel].p_sensor_pin, HIGH);
   }
   else
   {
     // сделать восемь замеров - METERING_COUNT == 8
     static word p = 0;
-    p += analogRead(channels[curChannel].d_sensor_pin);
-    if (++channels[curChannel].m_count >= METERING_COUNT)
+    p += analogRead(channels[channel].d_sensor_pin);
+    if (++channels[channel].m_count >= METERING_COUNT)
     { // потом отключить питание датчика и вычислить среднее значение
-      digitalWrite(channels[curChannel].p_sensor_pin, LOW);
-      channels[curChannel].m_count = 0;
-      channels[curChannel].metering_flag = SNS_NONE;
+      digitalWrite(channels[channel].p_sensor_pin, LOW);
+      channels[channel].m_count = 0;
       p /= METERING_COUNT;
 #ifdef LOG_ON
-      channels[curChannel].m_data = p;
-      printMeteringData(curChannel);
+      channels[channel].m_data = p;
+      printLastMeteringData(channel);
 #endif
       // определиться с дальнейшими действиями
-      switch (channels[curChannel].channel_state)
+      if (channels[channel].metering_flag != SNS_TESTING)
       {
-      // если после простоя сухо, включить режим полива
-      case CNL_WORK:
-        if (p >= 500)
+        channels[channel].metering_flag = SNS_NONE;
+        switch (channels[channel].channel_state)
         {
-          channels[curChannel].metering_flag = SNS_WATERING;
+        // если после простоя сухо, включить режим полива
+        case CNL_WORK:
+          if (p >= 500)
+          {
+            channels[channel].metering_flag = SNS_WATERING;
+          }
+          break;
+        // если после полива влажность недостаточна, включить ошибку и сигнализатор, иначе считать задачу выполненной и обнулить счетчик пустых циклов
+        case CNL_CHECK:
+          if (p > 300)
+          {
+            channels[channel].channel_state = CNL_ERROR;
+            // перезапустить пищалку, чтобы пропищало после ошибки полива в каждом канале
+            tasks.stopTask(buzzer_on);
+            runBuzzer();
+          }
+          else
+          {
+            channels[channel].min_max_count = 0;
+          }
+          break;
         }
-        break;
-      // если после полива влажность недостаточна, включить ошибку и сигнализатор, иначе считать задачу выполненной и обнулить счетчик пустых циклов
-      case CNL_CHECK:
-        if (p > 300)
-        {
-          channels[curChannel].channel_state = CNL_ERROR;
-          // перезапустить пищалку, чтобы пропищало после ошибки полива в каждом канале
-          tasks.stopTask(buzzer_on);
-          runBuzzer();
-        }
-        else
-        {
-          channels[curChannel].min_max_count = 0;
-        }
-        break;
       }
+      else
+        channels[channel].metering_flag = SNS_NONE;
       p = 0;
     }
   }
 }
 
-void cnlWatering()
+void cnlWatering(byte channel)
 {
   if (digitalRead(WATER_LEVEL_SENSOR_PIN))
   { // если вода есть, включить помпу и поливать, пока не истечет заданное время
-    digitalWrite(channels[curChannel].pump_pin, HIGH);
-    if (++channels[curChannel].p_count >= PUMP_TIMER * 10)
+    digitalWrite(channels[channel].pump_pin, HIGH);
+    if (++channels[channel].p_count >= PUMP_TIMER * 10)
     { // если время истекло, остановить помпу и включить режим измерения
-      digitalWrite(channels[curChannel].pump_pin, LOW);
-      channels[curChannel].metering_flag = SNS_METERING;
-      channels[curChannel].channel_state = CNL_CHECK;
-      channels[curChannel].p_count = 0;
+      digitalWrite(channels[channel].pump_pin, LOW);
+      channels[channel].metering_flag = SNS_METERING;
+      channels[channel].channel_state = CNL_CHECK;
+      channels[channel].p_count = 0;
     }
   }
   else
   { // если воды нет, остановить помпу
-    digitalWrite(channels[curChannel].pump_pin, LOW);
+    digitalWrite(channels[channel].pump_pin, LOW);
     // перезапустить пищалку, чтобы пропищало сразу
     tasks.stopTask(buzzer_on);
     runBuzzer();
@@ -174,11 +180,11 @@ void cnlWatering()
 
 byte getErrors()
 {
-  byte result = 0;
+  byte result = 1;
   for (byte i = 0; i < 4; i++)
   {
-    bool f = (i == 0) ? digitalRead(WATER_LEVEL_SENSOR_PIN) : tasks.getTaskState(channels[i - 1].channel_state) == CNL_ERROR;
-    (f) ? (result) |= (1UL << (f)) : (result) &= ~(1UL << (f));
+    bool f = (i == 0) ? !digitalRead(WATER_LEVEL_SENSOR_PIN) : channels[i - 1].channel_state == CNL_ERROR;
+    (f) ? (result) |= (1UL << (i)) : (result) &= ~(1UL << (i));
   }
   return (result);
 }
@@ -191,9 +197,9 @@ void manualStart(byte flag, bool run)
     channels[i].metering_flag = flag;
     if (!run)
     { // на случай если в момент остановки идет полив
+      tasks.stopTask(run_channel);
       digitalWrite(channels[i].pump_pin, LOW);
       digitalWrite(channels[i].p_sensor_pin, LOW);
-      tasks.stopTask(run_channel);
     }
   }
   tasks.stopTask(buzzer_on);
@@ -354,7 +360,7 @@ void setup()
 #endif
 
   FastLED.addLeds<WS2812B, LEDS_PIN, GRB>(leds, 4);
-  FastLED.setBrightness(50);
+  FastLED.setBrightness(5);
 
   // ==== настройка кнопки =============================
   btn.setLongClickMode(LCM_ONLYONCE);
@@ -397,25 +403,41 @@ void checkSerial()
   {
     int inByte = Serial.read();
     Serial.println(inByte);
-    Serial.print("Light sensor data: "); // показания датчика света
-    Serial.println(analogRead(LIGHT_SENSOR_PIN));
     Serial.println();
-    for (byte i = 0; i < 3; i++)
+    switch (inByte)
     {
-      switch (inByte)
+    case 49: // '1'
+      // показания датчика света
+      Serial.print("Light sensor data: ");
+      Serial.println(analogRead(LIGHT_SENSOR_PIN));
+      Serial.println();
+      for (byte i = 0; i < 3; i++)
       {
-      case 49: // '1'
         printChannelStatus(i);
-        break;
-      default:
-        printMeteringData(i);
-        break;
       }
+      break;
+    case 50: // '2'
+      if (!tasks.getTaskState(run_channel))
+      {
+        manualStart(SNS_TESTING);
+      }
+      else
+      {
+        Serial.println("Denied, watering or metering is in progress");
+      }
+      Serial.println();
+      break;
+    default:
+      for (byte i = 0; i < 3; i++)
+      {
+        printLastMeteringData(i);
+      }
+      break;
     }
   }
 }
 
-void printMeteringData(byte cnl)
+void printLastMeteringData(byte cnl)
 {
   Serial.print("Metering data, channel ");
   Serial.print(cnl);

@@ -34,6 +34,7 @@
 #define SNS_NONE 0     // состояние покоя
 #define SNS_METERING 1 // состояние измерения, датчик включен
 #define SNS_WATERING 2 // состояние полива, датчик отключен, работает помпа
+#define SNS_TESTING 3  // только замер влажности без полива вне зависимости от результата
 
 // структура с данными канала
 struct ChannelState
@@ -42,7 +43,7 @@ struct ChannelState
   byte p_sensor_pin;  // пин подключения питания датчика
   byte d_sensor_pin;  // пин данных датчика
   byte channel_state; // состояние канала: CNL_DONE, CNL_WORK, CNL_CHECK, CNL_ERROR
-  byte metering_flag; // состояние датчика: SNS_NONE, SNS_METERING, SNS_WATERING
+  byte metering_flag; // состояние датчика: SNS_NONE, SNS_METERING, SNS_WATERING, SNS_TESTING
   byte p_count;       // счетчик итераций в процессе полива
   byte m_count;       // счетчик измерений влажности
   byte min_max_count; // количество пустых циклов, для определения, когда еще рано запускать полив или нужно запускать в любом случае без замера влажности
@@ -57,10 +58,12 @@ struct ChannelState
 void runChanel();
 
 // канал в режиме измерения влажности
-void cnlMetering();
+//  channel - индекс канала
+void cnlMetering(byte channel);
 
 // канал в режиме полива, работает помпа
-void cnlWatering();
+//  channel - индекс канала
+void cnlWatering(byte channel);
 
 // получение данных о текущих ошибках; выдает битовую маску: первый бит - канал датчика уровня воды, второй-четвертый биты - каналы полива
 byte getErrors();
@@ -86,15 +89,15 @@ void checkButton();
 
 #ifdef LOG_ON
 
-// вывод данных замера влажности по каналу
+// вывод данных последнего замера влажности по каналу
 //  cnl - номер канала
-void printMeteringData(byte cnl);
+void printLastMeteringData(byte cnl);
 
 // вывод данных по статусу канала
 //  cnl - номер канала
 void printChannelStatus(byte cnl);
 
 // работа с сериалом и обработка полученных команд
- void checkSerial();
+void checkSerial();
 
 #endif

@@ -1,4 +1,5 @@
 #include <FastLED.h>
+#include <avr/eeprom.h>
 #include <shTaskManager.h>
 #include <shButton.h>
 #include "selfWatering.h"
@@ -11,6 +12,11 @@
 #define BUZZER_TIMEOUT 300         // интервал срабатывания пищалки в режиме "ошибка" в секундах
 #define LIGHT_SENSOR_THRESHOLD 150 // минимальные показания датчика света (0-1023)
 // ===================================================
+
+// адреса ячеек памяти для хранения настроек влажности по каналам
+uint16_t EEMEM e_chanel_2;
+uint16_t EEMEM e_chanel_1;
+uint16_t EEMEM e_chanel_0;
 
 shTaskManager tasks(4); // создаем список задач
 
@@ -30,6 +36,8 @@ ChannelState channel_3 = (ChannelState){PUMP_3_PIN, HPOWER_3_SENSOR_PIN, HUMIDIT
 
 // массив каналов полива
 ChannelState channels[3] = {channel_1, channel_2, channel_3};
+// массив адресов ячеек памяти для сохранения уровней влажности по каналам
+uint16_t emems[3] = {e_chanel_0, e_chanel_1, e_chanel_2};
 // массив адресных светодиодов-индикаторов
 CRGB leds[4];
 
@@ -60,6 +68,13 @@ void runChanel()
         if (channels[curChannel].min_max_count >= MAX_TIMER * 4)
         {
           channels[curChannel].metering_flag = SNS_WATERING;
+          // и записать новое значение порога влажности по значению последнего замера
+          word t = channels[curChannel].m_data - 30;
+          if (t < 400)
+          {
+            t = 400;
+          }
+          eeprom_update_word(&emems[curChannel], t);
         }
         else
         { // иначе включить режим измерения влажности
@@ -128,7 +143,7 @@ void cnlMetering(byte channel)
         {
         // если после простоя сухо, включить режим полива
         case CNL_WORK:
-          if (p >= 500)
+          if (p >= eeprom_read_word(&emems[channel]))
           {
             channels[channel].metering_flag = SNS_WATERING;
           }
@@ -362,12 +377,12 @@ void setup()
   FastLED.addLeds<WS2812B, LEDS_PIN, GRB>(leds, 4);
   FastLED.setBrightness(5);
 
-  // ==== настройка кнопки =============================
+  // ==== настройка кнопки ===========================
   btn.setLongClickMode(LCM_ONLYONCE);
   btn.setVirtualClickOn(true);
   btn.setTimeout(1000);
 
-  // ==== настройка пинов ==============================
+  // ==== настройка пинов ============================
   pinMode(WATER_LEVEL_SENSOR_PIN, INPUT_PULLUP);
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(HPOWER_1_SENSOR_PIN, OUTPUT);
@@ -377,11 +392,20 @@ void setup()
   pinMode(HPOWER_3_SENSOR_PIN, OUTPUT);
   pinMode(PUMP_3_PIN, OUTPUT);
 
-  // ==== настройка задач ==============================
+  // ==== настройка задач ============================
   main_timer = tasks.addTask(21600000, mainTimer);     // главный таймер - интервал 6 часов
   run_channel = tasks.addTask(100, runChanel);         // таймер работы с каналами
   leds_guard = tasks.addTask(100, setLeds);            // управление индикаторами
   buzzer_on = tasks.addTask(300000, runBuzzer, false); // таймер пищалки
+
+  // ==== пороги влажности по каналам ==============
+  for (byte i = 0; i < 3; i++)
+  {
+    if (eeprom_read_word(&emems[i]) > 1023)
+    {
+      eeprom_update_word(&emems[i], 600);
+    }
+  }
 }
 
 void loop()
@@ -468,6 +492,8 @@ void printChannelStatus(byte cnl)
     Serial.println("unknown");
     break;
   }
+  Serial.print("Humidity threshold: "); // порог влажности для канала
+  Serial.println(eeprom_read_word(&emems[cnl]));
   Serial.print("Cycles count: "); // количество прошедших шестичасовых циклов
   Serial.println(channels[cnl].min_max_count);
   Serial.print("Next point in "); // осталось времени до следующего цикла, час/мин

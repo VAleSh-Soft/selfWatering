@@ -25,10 +25,11 @@
 // ==== канал датчик/помпа ===========================
 
 // флаги состояния канала
-#define CNL_DONE 0  // состояние покоя, работа сделана/поливать не нужно
-#define CNL_WORK 1  // состояние работы, идет полив
-#define CNL_CHECK 2 // состояние проверки после полива
-#define CNL_ERROR 3 // ошибка - после полива датчик показывает сухую землю
+#define CNL_DONE 0   // состояние покоя, работа сделана/поливать не нужно
+#define CNL_WORK 1   // состояние работы, идет полив
+#define CNL_CHECK 2  // состояние проверки после полива
+#define CNL_RESCAN 3 // состояние перепроверки после полива, если датчик показал сухую землю
+#define CNL_ERROR 4  // ошибка - после полива и перепроверки датчик показывает сухую землю
 
 // флаги состояния датчика
 #define SNS_NONE 0     // состояние покоя
@@ -42,7 +43,7 @@ struct ChannelState
   byte pump_pin;      // пин, на который подключена помпа
   byte p_sensor_pin;  // пин подключения питания датчика
   byte d_sensor_pin;  // пин данных датчика
-  byte channel_state; // состояние канала: CNL_DONE, CNL_WORK, CNL_CHECK, CNL_ERROR
+  byte channel_state; // состояние канала: CNL_DONE, CNL_WORK, CNL_CHECK, CNL_RESCAN, CNL_ERROR
   byte metering_flag; // состояние датчика: SNS_NONE, SNS_METERING, SNS_WATERING, SNS_TESTING
   byte p_count;       // счетчик итераций в процессе полива
   byte m_count;       // счетчик измерений влажности
@@ -76,6 +77,7 @@ void manualStart(byte flag, bool run = true);
 void mainTimer();
 void setLeds();
 void runBuzzer();
+void rescanStart();
 
 // ==== разное =======================================
 

@@ -18,12 +18,13 @@ uint16_t EEMEM e_chanel_2;
 uint16_t EEMEM e_chanel_1;
 uint16_t EEMEM e_chanel_0;
 
-shTaskManager tasks(4); // создаем список задач
+shTaskManager tasks(5); // создаем список задач
 
-shHandle main_timer;  // главный таймер
-shHandle run_channel; // таймер работы каналов полива
-shHandle leds_guard;  // таймер индикаторов
-shHandle buzzer_on;   // таймер пищалки
+shHandle main_timer;   // главный таймер
+shHandle run_channel;  // таймер работы каналов полива
+shHandle leds_guard;   // таймер индикаторов
+shHandle buzzer_on;    // таймер пищалки
+shHandle rescan_start; // таймер перепроверки влажности после полива
 
 byte curChannel = 0; // текущий канал полива
 
@@ -101,7 +102,7 @@ void runChanel()
       cnlWatering(curChannel);
       break;
     default:
-      if (channels[curChannel].channel_state != CNL_ERROR)
+      if (channels[curChannel].channel_state != CNL_ERROR && channels[curChannel].channel_state != CNL_RESCAN)
       {
         channels[curChannel].channel_state = CNL_DONE;
       }
@@ -131,8 +132,8 @@ void cnlMetering(byte channel)
       digitalWrite(channels[channel].p_sensor_pin, LOW);
       channels[channel].m_count = 0;
       p /= METERING_COUNT;
-#ifdef LOG_ON
       channels[channel].m_data = p;
+#ifdef LOG_ON
       printLastMeteringData(channel);
 #endif
       // определиться с дальнейшими действиями
@@ -148,18 +149,32 @@ void cnlMetering(byte channel)
             channels[channel].metering_flag = SNS_WATERING;
           }
           break;
-        // если после полива влажность недостаточна, включить ошибку и сигнализатор, иначе считать задачу выполненной и обнулить счетчик пустых циклов
+        // если после полива влажность недостаточна, включить перепроверку через минуту, чтобы дать возможность воде разойтись в почве и дойти до датчика; если недостаточна и после перепроверки, включить ошибку и сигнализатор; иначе считать задачу выполненной и обнулить счетчик пустых циклов
         case CNL_CHECK:
+        case CNL_RESCAN:
           if (p > 300)
           {
-            channels[channel].channel_state = CNL_ERROR;
-            // перезапустить пищалку, чтобы пропищало после ошибки полива в каждом канале
-            tasks.stopTask(buzzer_on);
-            runBuzzer();
+            if (channels[channel].channel_state == CNL_RESCAN)
+            {
+              channels[channel].channel_state = CNL_ERROR;
+              if (!tasks.getTaskState(buzzer_on))
+              {
+                runBuzzer();
+              }
+            }
+            else
+            {
+              channels[channel].channel_state = CNL_RESCAN;
+              tasks.startTask(rescan_start);
+            }
           }
           else
           {
             channels[channel].min_max_count = 0;
+            if (channels[channel].channel_state == CNL_RESCAN)
+            {
+              channels[channel].channel_state = CNL_CHECK;
+            }
           }
           break;
         }
@@ -208,7 +223,10 @@ void manualStart(byte flag, bool run)
 {
   for (byte i = 0; i < 3; i++)
   {
-    channels[i].channel_state = CNL_DONE;
+    if (channels[i].channel_state != CNL_RESCAN)
+    {
+      channels[i].channel_state = CNL_DONE;
+    }
     channels[i].metering_flag = flag;
     if (!run)
     { // на случай если в момент остановки идет полив
@@ -253,6 +271,9 @@ void setLeds()
     {
     case CNL_ERROR:
       leds[i + 1] = CRGB::Red;
+      break;
+    case CNL_RESCAN:
+      leds[i + 1] = digitalRead(channels[i].p_sensor_pin) ? CRGB::Orange : CRGB::Red;
       break;
     case CNL_WORK:
     case CNL_CHECK:
@@ -332,6 +353,15 @@ void runBuzzer()
   }
 }
 
+void rescanStart()
+{
+  if (!tasks.getTaskState(run_channel))
+  {
+    manualStart(SNS_METERING);
+    tasks.stopTask(rescan_start);
+  }
+}
+
 // ===================================================
 
 void checkButton()
@@ -340,9 +370,21 @@ void checkButton()
   {
   // при коротком клике остановить пищалку и сбросить ошибки по каналам
   case BTN_ONECLICK:
-    if (tasks.getTaskState(buzzer_on) && !tasks.getTaskState(run_channel))
+    if ((tasks.getTaskState(buzzer_on) && !tasks.getTaskState(run_channel)) || tasks.getTaskState(rescan_start))
     {
       manualStart(SNS_NONE, false);
+      // если запущен таймер рескана датчиков влажности, остановить его
+      if (tasks.getTaskState(rescan_start))
+      {
+        tasks.stopTask(rescan_start);
+        for (byte i = 0; i < 3; i++)
+        {
+          if (channels[i].channel_state == CNL_RESCAN)
+          {
+            channels[i].channel_state = CNL_DONE;
+          }
+        }
+      }
     }
     break;
   // при двойном клике запустить полив с замером влажности
@@ -393,10 +435,11 @@ void setup()
   pinMode(PUMP_3_PIN, OUTPUT);
 
   // ==== настройка задач ============================
-  main_timer = tasks.addTask(21600000, mainTimer);     // главный таймер - интервал 6 часов
-  run_channel = tasks.addTask(100, runChanel);         // таймер работы с каналами
-  leds_guard = tasks.addTask(100, setLeds);            // управление индикаторами
-  buzzer_on = tasks.addTask(300000, runBuzzer, false); // таймер пищалки
+  main_timer = tasks.addTask(21600000, mainTimer);         // главный таймер - интервал 6 часов
+  run_channel = tasks.addTask(100, runChanel);             // таймер работы с каналами
+  leds_guard = tasks.addTask(100, setLeds);                // управление индикаторами
+  buzzer_on = tasks.addTask(300000, runBuzzer, false);     // таймер пищалки
+  rescan_start = tasks.addTask(60000, rescanStart, false); // таймер перепроверки влажности
 
   // ==== пороги влажности по каналам ==============
   for (byte i = 0; i < 3; i++)
@@ -430,17 +473,38 @@ void checkSerial()
     Serial.println();
     switch (inByte)
     {
-    case 49: // '1'
+    case 49: // '1' - вывод состояния таймеров, датчиков и каналов
+      // состояние таймеров
+      Serial.println("=== Timers state ===");
+      Serial.println();
+      Serial.print("main_timer: ");
+      Serial.println(tasks.getTaskState(main_timer));
+      Serial.print("run_channel: ");
+      Serial.println(tasks.getTaskState(run_channel));
+      Serial.print("leds_guard: ");
+      Serial.println(tasks.getTaskState(leds_guard));
+      Serial.print("buzzer_on: ");
+      Serial.println(tasks.getTaskState(buzzer_on));
+      Serial.print("rescan_start: ");
+      Serial.println(tasks.getTaskState(rescan_start));
+      Serial.println();
+      Serial.println("=== Sensors state ===");
+      Serial.println();
       // показания датчика света
       Serial.print("Light sensor data: ");
       Serial.println(analogRead(LIGHT_SENSOR_PIN));
+      // наличие воды по датчику уровня
+      Serial.print("Water sensor data: ");
+      digitalRead(WATER_LEVEL_SENSOR_PIN) ? Serial.println("yes") : Serial.println("no");
+      Serial.println();
+      Serial.println("=== Channels state ===");
       Serial.println();
       for (byte i = 0; i < 3; i++)
       {
         printChannelStatus(i);
       }
       break;
-    case 50: // '2'
+    case 50: // '2' - получение текущей влажности по каналам
       if (!tasks.getTaskState(run_channel))
       {
         manualStart(SNS_TESTING);
@@ -451,7 +515,7 @@ void checkSerial()
       }
       Serial.println();
       break;
-    default:
+    default: // вывод данных по последнему замеру влажности по каналам
       for (byte i = 0; i < 3; i++)
       {
         printLastMeteringData(i);
@@ -471,9 +535,9 @@ void printLastMeteringData(byte cnl)
 
 void printChannelStatus(byte cnl)
 {
-  Serial.print("Status data, channel ");
-  Serial.println(cnl);
-  Serial.print("Channel state: "); // текущий статус канала
+  Serial.print("Channel "); // текущий статус канала
+  Serial.print(cnl);
+  Serial.print(" state: ");
   switch (channels[cnl].channel_state)
   {
   case CNL_DONE:
@@ -482,11 +546,37 @@ void printChannelStatus(byte cnl)
   case CNL_WORK:
     Serial.println("CNL_WORK");
     break;
+  case CNL_CHECK:
+    Serial.println("CNL_CHECK");
+    break;
+  case CNL_RESCAN:
+    Serial.println("CNL_RESCAN");
+    break;
   case CNL_ERROR:
     Serial.println("CNL_ERROR");
     break;
-  case CNL_CHECK:
-    Serial.println("CNL_CHECK");
+  default:
+    Serial.println("unknown");
+    break;
+  }
+  Serial.print("Pump: "); // текущий статус помпы
+  digitalRead(channels[cnl].pump_pin) ? Serial.println("power ON") : Serial.println("power OFF");
+  Serial.print("Humidity sensor: "); // текущий статус датчика влажности
+  digitalRead(channels[cnl].p_sensor_pin) ? Serial.println("power ON") : Serial.println("power OFF");
+  Serial.print("Metering flag: ");
+  switch (channels[cnl].metering_flag)
+  {
+  case SNS_NONE:
+    Serial.println("SNS_NONE");
+    break;
+  case SNS_METERING:
+    Serial.println("SNS_METERING");
+    break;
+  case SNS_TESTING:
+    Serial.println("SNS_TESTING");
+    break;
+  case SNS_WATERING:
+    Serial.println("SNS_WATERING");
     break;
   default:
     Serial.println("unknown");
@@ -494,6 +584,8 @@ void printChannelStatus(byte cnl)
   }
   Serial.print("Humidity threshold: "); // порог влажности для канала
   Serial.println(eeprom_read_word(&emems[cnl]));
+  Serial.print("Humidity last data: "); // последний замер влажности для канала
+  Serial.println(channels[cnl].m_data);
   Serial.print("Cycles count: "); // количество прошедших шестичасовых циклов
   Serial.println(channels[cnl].min_max_count);
   Serial.print("Next point in "); // осталось времени до следующего цикла, час/мин

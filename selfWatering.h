@@ -59,7 +59,7 @@ struct ChannelState
   byte channel_state; // состояние канала: CNL_DONE, CNL_WORK, CNL_CHECK, CNL_RESCAN, CNL_ERROR
   byte metering_flag; // состояние датчика: SNS_NONE, SNS_METERING, SNS_WATERING, SNS_TESTING
   uint32_t p_timer;   // таймер работы помпы
-  byte m_count;       // счетчик измерений влажности
+  byte m_count;       // счетчик циклов измерений влажности
   byte min_max_count; // количество пустых циклов, для определения, когда еще рано запускать полив или нужно запускать в любом случае без замера влажности
   word m_data;        // данные последнего замера влажности
   byte flag;          // поле для передачи данных в задачи

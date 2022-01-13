@@ -6,32 +6,17 @@
 #include "selfWatering.h"
 
 // ==== настройки ====================================
-#define MAX_TIMER 14                  // максимальное количество суток, по истечении которого полив будет включен безусловно
-#define MIN_TIMER 7                   // минимальное количество суток, до истечения которого полив не будет включен
-#define METERING_COUNT 8              // количество замеров влажности для усреднения результата; желательно задавать значение, равное степени числа 2 (2, 4, 8, 16 и т.д.)
-#define BUZZER_TIMEOUT 300            // интервал срабатывания пищалки в режиме "ошибка" в секундах
-#define LIGHT_SENSOR_THRESHOLD 150    // минимальные показания датчика света (0-1023)
-#define MAX_PUMP_TIMER 60000ul        // максимальное время работы помпы, мс
-#define DEFAULT_PUMP_TIMER 10000ul    // значение времени работы помпы по умолчанию
-#define DEFAULT_HUMIDITY_THRESHLD 600 // порог датчика влажности по умолчанию
-// ===================================================
+#define MAX_DAY_COUNT_DEF 14           // максимальное количество суток, по истечении которого полив будет включен безусловно
+#define MIN_DAY_COUNT_DEF 7            // минимальное количество суток, до истечения которого полив не будет включен
+#define METERING_COUNT 8               // количество замеров влажности для усреднения результата; желательно задавать значение, равное степени числа 2 (2, 4, 8, 16 и т.д.)
+#define BUZZER_TIMEOUT 300             // интервал срабатывания пищалки в режиме "ошибка" в секундах
+#define LIGHT_SENSOR_THRESHOLD 150     // минимальные показания датчика света (0-1023)
+#define MAX_PUMP_TIMER 60000ul         // максимальное время работы помпы, мс
+#define DEFAULT_PUMP_TIMER 10000ul     // значение времени работы помпы по умолчанию
+#define DEFAULT_HUMIDITY_THRESHOLD 600 // порог датчика влажности по умолчанию
 
-// адреса ячеек памяти для хранения данных по включенным датчика влажности
-byte EEMEM hs_channel_2;
-byte EEMEM hs_channel_1;
-byte EEMEM hs_channel_0;
-// адреса ячеек памяти для хранения данных по включенным каналам
-byte EEMEM on_channel_2;
-byte EEMEM on_channel_1;
-byte EEMEM on_channel_0;
-// адреса ячеек памяти для хранения настроек времени работы помпы по каналам
-uint32_t EEMEM t_pump_2;
-uint32_t EEMEM t_pump_1;
-uint32_t EEMEM t_pump_0;
-// адреса ячеек памяти для хранения настроек влажности по каналам
-uint16_t EEMEM h_channel_2;
-uint16_t EEMEM h_channel_1;
-uint16_t EEMEM h_channel_0;
+byte const CHANNEL_COUNT = 3; // количество каналов полива
+// ===================================================
 
 shTaskManager tasks(8); // создаем список задач
 
@@ -59,20 +44,24 @@ byte curBtnCount = 0;        // счетчик одиночных кликов �
 shButton btn(BTN_PIN);
 
 // массив каналов полива
-ChannelState channels[3] = {
+ChannelState channels[] = {
     (ChannelState){PUMP_1_PIN, HPOWER_1_SENSOR_PIN, HUMIDITY_1_SENSOR_PIN, CNL_DONE, SNS_METERING, 0, 0, 0, 0, 0},
     (ChannelState){PUMP_2_PIN, HPOWER_2_SENSOR_PIN, HUMIDITY_2_SENSOR_PIN, CNL_DONE, SNS_METERING, 0, 0, 0, 0, 0},
     (ChannelState){PUMP_3_PIN, HPOWER_3_SENSOR_PIN, HUMIDITY_3_SENSOR_PIN, CNL_DONE, SNS_METERING, 0, 0, 0, 0, 0}};
-// массив адресов ячеек памяти для сохранения данных по включенным датчика влажности
-byte hs_eemems[3] = {hs_channel_0, hs_channel_1, hs_channel_2};
+// массив адресов ячеек памяти для сохранения максимального количества дней
+uint16_t md_eemems[] = {146, 147, 148};
+// массив адресов ячеек памяти для сохранения минимального количества дней
+uint16_t d_eemems[] = {141, 142, 143};
+// массив адресов ячеек памяти для сохранения данных по включенным датчикам влажности
+uint16_t hs_eemems[] = {135, 136, 137};
 // массив адресов ячеек памяти для сохранения данных по включенным каналам
-byte c_eemems[3] = {on_channel_0, on_channel_1, on_channel_2};
+uint16_t c_eemems[] = {130, 131, 132};
 // массив адресов ячеек памяти для сохранения уровней влажности по каналам
-uint16_t h_eemems[3] = {h_channel_0, h_channel_1, h_channel_2};
+uint16_t h_eemems[] = {120, 122, 124};
 // массив адресов ячеек памяти для сохранения настроек помпы по каналам
-uint32_t p_eemems[3] = {t_pump_0, t_pump_1, t_pump_2};
+uint16_t p_eemems[] = {100, 104, 108};
 // массив адресных светодиодов-индикаторов
-CRGB leds[4];
+CRGB leds[CHANNEL_COUNT + 1];
 
 // ===================================================
 
@@ -92,7 +81,7 @@ void runChanel()
   // запускать полив только в основном режиме, иначе ждать выхода из режима настроек
   if (curMode == MODE_DEFAULT)
   { // если канал используется и еще не в рабочем режиме, перевести его в рабочий режим
-    if ((channels[curChannel].channel_state == CNL_DONE) && eeprom_read_byte(&c_eemems[curChannel]))
+    if ((channels[curChannel].channel_state == CNL_DONE) && eeprom_read_byte(c_eemems[curChannel]))
     {
       // и попутно увеличить счетчик срабатывания, если это не ручной запуск; при первом запуске счетчик увеличить в любом случае
       if (channels[curChannel].metering_flag == SNS_NONE || channels[curChannel].min_max_count == 0)
@@ -103,24 +92,24 @@ void runChanel()
       // если датчик еще в состоянии покоя, включить его и настроить канал на работу
       if (channels[curChannel].metering_flag == SNS_NONE)
       { // продолжить только если прошло минимальное количество суток и в светлое время
-        if (channels[curChannel].min_max_count >= MIN_TIMER * 4 && analogRead(LIGHT_SENSOR_PIN) > LIGHT_SENSOR_THRESHOLD)
+        if (channels[curChannel].min_max_count >= eeprom_read_byte(d_eemems[curChannel]) * 4 && analogRead(LIGHT_SENSOR_PIN) > LIGHT_SENSOR_THRESHOLD)
         {
           // если использование датчика влажности для канала отключено
-          if (!eeprom_read_byte(&hs_eemems[curChannel]))
+          if (!eeprom_read_byte(hs_eemems[curChannel]))
           {
             setWateringMode(curChannel);
           }
           // или если прошло максимальное количество дней, включить полив без замера влажности
-          else if (channels[curChannel].min_max_count >= MAX_TIMER * 4)
+          else if (channels[curChannel].min_max_count >= eeprom_read_byte(md_eemems[curChannel]) * 4)
           {
             setWateringMode(curChannel);
-            // и записать новое значение порога влажности по значению последнего замера
-            word t = channels[curChannel].m_data - 30;
-            if (t < 400)
+            // и уменьшить порог срабатывания на ступень
+            word t = eeprom_read_word(h_eemems[curChannel]);
+            if (t > 400)
             {
-              t = 400;
+              t -= 100;
             }
-            eeprom_update_word(&h_eemems[curChannel], t);
+            eeprom_update_word(h_eemems[curChannel], t);
           }
           else
           { // иначе включить режим измерения влажности
@@ -130,14 +119,14 @@ void runChanel()
           }
         }
       }
-      else if ((channels[curChannel].metering_flag == SNS_WATERING) || !eeprom_read_byte(&hs_eemems[curChannel]))
+      else if ((channels[curChannel].metering_flag == SNS_WATERING) || !eeprom_read_byte(hs_eemems[curChannel]))
       {
         setWateringMode(curChannel);
       }
     }
     else
     {
-      if (!eeprom_read_byte(&c_eemems[curChannel]))
+      if (!eeprom_read_byte(c_eemems[curChannel]))
       {
         channels[curChannel].metering_flag = SNS_NONE;
       }
@@ -156,7 +145,7 @@ void runChanel()
         {
           channels[curChannel].channel_state = CNL_DONE;
         }
-        if (++curChannel >= 3)
+        if (++curChannel >= CHANNEL_COUNT)
         {
           tasks.stopTask(run_channel);
           curChannel = 0;
@@ -195,7 +184,7 @@ void cnlMetering(byte channel)
         {
         // если после простоя сухо, включить режим полива
         case CNL_WORK:
-          if (p >= eeprom_read_word(&h_eemems[channel]))
+          if (p >= eeprom_read_word(h_eemems[channel]))
           {
             setWateringMode(channel);
           }
@@ -242,11 +231,11 @@ void cnlWatering(byte channel)
   if (digitalRead(WATER_LEVEL_SENSOR_PIN))
   { // если вода есть, включить помпу и поливать, пока не истечет заданное время
     digitalWrite(channels[channel].pump_pin, HIGH);
-    if (millis() - channels[channel].p_timer >= eeprom_read_dword(&p_eemems[channel]))
+    if (millis() - channels[channel].p_timer >= eeprom_read_dword(p_eemems[channel]))
     { // если время истекло, остановить помпу
       digitalWrite(channels[channel].pump_pin, LOW);
       // режим измерения включить только если датчик влажности для этого канала используется
-      if (eeprom_read_byte(&hs_eemems[curChannel]))
+      if (eeprom_read_byte(hs_eemems[curChannel]))
       {
         channels[channel].metering_flag = SNS_METERING;
         channels[channel].channel_state = CNL_CHECK;
@@ -280,7 +269,7 @@ void manualStart(byte flag, bool run)
 {
   tasks.stopTask(error_buzzer_on);
   tasks.startTask(leds_guard);
-  for (byte i = 0; i < 3; i++)
+  for (byte i = 0; i < CHANNEL_COUNT; i++)
   {
     if (channels[i].channel_state != CNL_RESCAN)
     {
@@ -308,6 +297,7 @@ void mainTimer()
   manualStart(SNS_NONE);
 }
 
+// подсветка индикаторов каналов в основном режиме
 void setLedsDefault(byte i)
 {
   switch (channels[i].channel_state)
@@ -333,13 +323,111 @@ void setLeds_3(byte i)
 {
   if (i == curChannel)
   {
-    // текущий канал подсвечивать синим или зеленым (если помпа включена); остальные каналы не подсвечивать
-    leds[i + 1] = digitalRead(channels[i].pump_pin) ? CRGB::Green : CRGB::Blue;
+    static byte n = 0;
+    // текущий канал подсвечивать синим или зеленым (если помпа включена); в зеленом режиме индикатор подмигивает с частотой полсекунды и проблескивает белым с частотой 1 секунда
+    if (digitalRead(channels[i].pump_pin))
+    {
+      switch (n)
+      {
+      case 4:
+        leds[i + 1] = CRGB::Black;
+        break;
+      case 9:
+        leds[i + 1] = CRGB::White;
+        break;
+      default:
+        leds[i + 1] = CRGB::Green;
+        break;
+      }
+      if (++n > 9)
+      {
+        n = 0;
+      }
+    }
+    else
+    {
+      leds[i + 1] = CRGB::Blue;
+      n = 0;
+    }
   }
   else
+  // остальные каналы не подсвечивать
   {
     leds[i + 1] = CRGB::Black;
   }
+}
+
+// подсветка индикаторов каналов при настройке порога влажности и количества дней
+void setLeds_4(byte i)
+{
+  static byte n = 0;
+  static byte k = 0;
+  static byte b = channels[curChannel].m_count;
+  static byte f = curChannel;
+  // если канал изменился, сразу обновить данные
+  if (f != curChannel)
+  {
+    f = curChannel;
+    n = 0;
+    k = 0;
+    b = channels[curChannel].m_count;
+  }
+
+  if (i == curChannel)
+  {
+    if (btn.isButtonClosed())
+    {
+      n = 0;
+      k = 0;
+      b = channels[curChannel].m_count;
+    }
+    else
+    {
+      if (!k)
+      {
+        if (++n > 5)
+        {
+          n = 0;
+          if (--b == 0)
+          {
+            k++;
+          }
+        }
+      }
+      else
+      {
+        n = 0;
+        if (++k > 12)
+        {
+          n = 0;
+          k = 0;
+          b = channels[curChannel].m_count;
+          ;
+        }
+      }
+    }
+    if ((n >= 5) && (!k))
+    {
+      leds[i + 1] = CRGB::White;
+    }
+    else
+    {
+      switch (curBtnCount)
+      {
+      case 4:
+        leds[i + 1] = CRGB::Blue;
+        break;
+      case 5:
+        leds[i + 1] = CRGB::Orange;
+        break;
+      case 6:
+        leds[i + 1] = CRGB::Purple;
+        break;
+      }
+    }
+  }
+  else
+    leds[i + 1] = CRGB::Black;
 }
 
 // подсветка индикаторов каналов при настройке включения/отключения датчиков влажности и каналов в целом
@@ -350,7 +438,7 @@ void setLeds_7(byte i)
   // если канал изменился, его индикатор начинает с "зажмуренного" состояния ))
   if (f != curChannel)
   {
-    n = 8;
+    n = 9;
     f = curChannel;
   }
 
@@ -376,10 +464,10 @@ void setLeds_7(byte i)
     switch (curBtnCount)
     {
     case 7:
-      leds[i + 1] = (eeprom_read_byte(&hs_eemems[i])) ? CRGB::Blue : CRGB::Red;
+      leds[i + 1] = (eeprom_read_byte(hs_eemems[i])) ? CRGB::Blue : CRGB::Red;
       break;
     case 8:
-      leds[i + 1] = (eeprom_read_byte(&c_eemems[i])) ? CRGB::Green : CRGB::Red;
+      leds[i + 1] = (eeprom_read_byte(c_eemems[i])) ? CRGB::Green : CRGB::Red;
       break;
     }
   }
@@ -392,19 +480,26 @@ void setLeds_7(byte i)
 void setLeds()
 {
   static byte n = 0;
-  // индикатор датчика уровня воды подмигивает каждые две секунды зеленым, если вода есть и красным, если воды нет
-  leds[0] = (digitalRead(WATER_LEVEL_SENSOR_PIN)) ? CRGB::Green : CRGB::Red;
-  if (n >= 19)
+  // индикатор датчика уровня воды подмигивает каждые две секунды зеленым, если вода есть и красным, если воды нет; в режиме настройки индикатор отключен
+  if (curMode == MODE_DEFAULT)
+  {
+    leds[0] = (digitalRead(WATER_LEVEL_SENSOR_PIN)) ? CRGB::Green : CRGB::Red;
+    if (n >= 19)
+    {
+      leds[0] = CRGB::Black;
+    }
+    if (++n > 19)
+    {
+      n = 0;
+    }
+  }
+  else
   {
     leds[0] = CRGB::Black;
   }
-  if (++n > 19)
-  {
-    n = 0;
-  }
 
   // индикаторы каналов
-  for (byte i = 0; i < 3; i++)
+  for (byte i = 0; i < CHANNEL_COUNT; i++)
   {
     switch (curMode)
     {
@@ -416,6 +511,11 @@ void setLeds()
       {
       case 3:
         setLeds_3(i);
+        break;
+      case 4:
+      case 5:
+      case 6:
+        setLeds_4(i);
         break;
       case 7:
       case 8:
@@ -542,48 +642,100 @@ void rescanStart()
   }
 }
 
-void isBtnClosed_3(uint32_t _tmr, uint32_t &_timer, uint32_t &_result)
+void isBtnClosed_3(uint32_t _tmr, uint32_t &_result)
 {
   if (!digitalRead(channels[curChannel].pump_pin))
   {
     tone(BUZZER_PIN, 2500, 100);
+    leds[curChannel + 1] = CRGB::White;
+    FastLED.show();
     digitalWrite(channels[curChannel].pump_pin, HIGH);
-    _timer = _tmr;
+    channels[curChannel].p_timer = _tmr;
   }
   else
-  {
-    if (_tmr - _timer >= MAX_PUMP_TIMER)
+  { // если истекло максимальное разрешенное время работы помпы, остановить ее
+    if (_tmr - channels[curChannel].p_timer >= MAX_PUMP_TIMER)
     {
       digitalWrite(channels[curChannel].pump_pin, LOW);
+      tone(BUZZER_PIN, 2500, 300);
       _result = MAX_PUMP_TIMER;
       channels[curChannel].flag = FL_STOP_DATA;
     }
   }
 }
 
+void isBtnClosed_4()
+{
+  static uint32_t _timer = 0;
+  byte max_data;
+  switch (curBtnCount)
+  {
+  case 4:
+    max_data = 4;
+    break;
+  case 5:
+    max_data = 14;
+    break;
+  case 6:
+    max_data = 28;
+    break;
+  }
+  // увеличивать значение каждые полсекунды, пока нажата кнопка
+  if (millis() - _timer >= 500)
+  {
+    _timer = millis();
+    channels[curChannel].m_count++;
+    if (channels[curChannel].m_count == max_data)
+    {
+      // останавливать прирост данных при достижении максимального значения
+      channels[curChannel].flag = FL_STOP_DATA;
+    }
+    if (channels[curChannel].m_count > max_data)
+    {
+      channels[curChannel].m_count = 1;
+    }
+    tone(BUZZER_PIN, 2500, 100);
+    leds[curChannel + 1] = CRGB::White;
+    FastLED.show();
+  }
+}
+
+void getCurrentData()
+{
+  // поле m_count используется только при измерении влажности, поэтому его можно с чистой совестью использовать в процессе настроек
+  switch (curBtnCount)
+  {
+  case 4:
+    channels[curChannel].m_count = eeprom_read_word(h_eemems[curChannel]) / 100 - 3;
+    break;
+  case 5:
+    channels[curChannel].m_count = eeprom_read_byte(d_eemems[curChannel]);
+    break;
+  case 6:
+    channels[curChannel].m_count = eeprom_read_byte(md_eemems[curChannel]);
+    break;
+  case 7:
+    channels[curChannel].m_count = eeprom_read_byte(hs_eemems[curChannel]);
+    break;
+  case 8:
+    channels[curChannel].m_count = eeprom_read_byte(c_eemems[curChannel]);
+    break;
+  }
+}
+
 void runSetChannels()
 {
-  static uint32_t pumpTimer = 0;
   static uint32_t result = 0;
   uint32_t tmr = millis();
 
   if (!tasks.getTaskState(run_set_channels))
   {
-    tasks.startTask(run_set_channels);
-    tasks.startTask(return_to_def_mode);
     curChannel = 0;
     channels[curChannel].flag = FL_NONE;
-    // поле m_count используется только при измерении влажности, поэтому его можно с чистой совестью использовать в процессе настроек
-    switch (curBtnCount)
-    {
-    case 7:
-      channels[curChannel].m_count = eeprom_read_byte(&hs_eemems[curChannel]);
-      break;
-    case 8:
-      channels[curChannel].m_count = eeprom_read_byte(&c_eemems[curChannel]);
-      break;
-    }
+    getCurrentData();
     curMode = MODE_SETTING;
+    tasks.startTask(run_set_channels);
+    tasks.startTask(return_to_def_mode);
     runSetBuzzer();
   }
   // ждать, пока отработает пищалка
@@ -600,7 +752,12 @@ void runSetChannels()
       switch (curBtnCount)
       {
       case 3:
-        isBtnClosed_3(tmr, pumpTimer, result);
+        isBtnClosed_3(tmr, result);
+        break;
+      case 4:
+      case 5:
+      case 6:
+        isBtnClosed_4();
         break;
       case 7:
       case 8:
@@ -612,12 +769,16 @@ void runSetChannels()
     }
     else
     {
+      channels[curChannel].flag = FL_STOP_DATA;
       switch (curBtnCount)
       {
       case 3:
-        result = tmr - pumpTimer;
         digitalWrite(channels[curChannel].pump_pin, LOW);
-        channels[curChannel].flag = FL_STOP_DATA;
+        result = tmr - channels[curChannel].p_timer;
+        if (result < 1000)
+        {
+          result = DEFAULT_PUMP_TIMER;
+        }
         break;
       }
     }
@@ -630,41 +791,42 @@ void runSetChannels()
       switch (curBtnCount)
       {
       case 3:
-        eeprom_update_dword(&p_eemems[curChannel], result);
+        eeprom_update_dword(p_eemems[curChannel], result);
+        break;
+      case 4:
+        eeprom_update_word(h_eemems[curChannel], (channels[curChannel].m_count + 3) * 100);
+        break;
+      case 5:
+        eeprom_update_byte(d_eemems[curChannel], channels[curChannel].m_count);
+        break;
+      case 6:
+        eeprom_update_byte(md_eemems[curChannel], channels[curChannel].m_count);
         break;
       case 7:
-        eeprom_update_byte(&hs_eemems[curChannel], channels[curChannel].m_count);
+        eeprom_update_byte(hs_eemems[curChannel], channels[curChannel].m_count);
         break;
       case 8:
-        eeprom_update_byte(&c_eemems[curChannel], channels[curChannel].m_count);
+        eeprom_update_byte(c_eemems[curChannel], channels[curChannel].m_count);
         break;
       }
     }
     if (channels[curChannel].flag == FL_EXIT)
     {
-      curChannel = 3;
+      curChannel = CHANNEL_COUNT;
     }
     else
     {
       curChannel++;
     }
-    if (curChannel < 3)
+    if (curChannel < CHANNEL_COUNT)
     {
       channels[curChannel].flag = FL_NONE;
-      switch (curBtnCount)
-      {
-      case 7:
-        channels[curChannel].m_count = eeprom_read_byte(&hs_eemems[curChannel]);
-        break;
-      case 8:
-        channels[curChannel].m_count = eeprom_read_byte(&c_eemems[curChannel]);
-        break;
-      }
+      getCurrentData();
       tone(BUZZER_PIN, 2000, 100);
     }
   }
   // выход из настроек
-  if (curChannel >= 3)
+  if (curChannel >= CHANNEL_COUNT)
   {
     tasks.stopTask(run_set_channels);
     tasks.stopTask(return_to_def_mode);
@@ -716,7 +878,7 @@ void checkButton()
         if (tasks.getTaskState(rescan_start))
         {
           tasks.stopTask(rescan_start);
-          for (byte i = 0; i < 3; i++)
+          for (byte i = 0; i < CHANNEL_COUNT; i++)
           {
             if (channels[i].channel_state == CNL_RESCAN)
             {
@@ -821,28 +983,36 @@ void setup()
   error_buzzer_on = tasks.addTask(300000, runErrorBuzzer, false);    // таймер сигнала ошибки
   rescan_start = tasks.addTask(60000, rescanStart, false);           // таймер перепроверки влажности
   set_buzzer_on = tasks.addTask(1000, runSetBuzzer, false);          // таймер пищалки режима настройи
-  run_set_channels = tasks.addTask(1000, runSetChannels, false);     // таймер режима настройки 
+  run_set_channels = tasks.addTask(1000, runSetChannels, false);     // таймер режима настройки
   return_to_def_mode = tasks.addTask(60000, returnToDefMode, false); // таймер автовыхода из настроек
 
-  // ==== проверка каналов на использование датчика влажности; если для какого-то канала датчик отключен, отключить замер влажности при старте программы; иначе сразу будет включен полив;
-  for (byte i = 0; i < 3; i++)
+  // ==== проверка каналов на использование датчика влажности; если для какого-то канала датчик отключен, отключить замер влажности при старте программы; иначе сразу будет включен полив канала;
+  for (byte i = 0; i < CHANNEL_COUNT; i++)
   {
-    if (!eeprom_read_byte(&hs_eemems[i]))
+    if (!eeprom_read_byte(hs_eemems[i]))
     {
       channels[i].metering_flag = SNS_NONE;
     }
   }
 
   // ==== верификация настроек по каналам ============
-  for (byte i = 0; i < 3; i++)
+  for (byte i = 0; i < CHANNEL_COUNT; i++)
   {
-    if ((eeprom_read_word(&h_eemems[i]) > 700) || (eeprom_read_word(&h_eemems[i]) < 400))
+    if ((eeprom_read_word(h_eemems[i]) > 700) || (eeprom_read_word(h_eemems[i]) < 400))
     {
-      eeprom_update_word(&h_eemems[i], DEFAULT_HUMIDITY_THRESHLD);
+      eeprom_update_word(h_eemems[i], DEFAULT_HUMIDITY_THRESHOLD);
     }
-    if (eeprom_read_dword(&p_eemems[i]) > MAX_PUMP_TIMER || eeprom_read_dword(&p_eemems[i]) <= 1000)
+    if (eeprom_read_dword(p_eemems[i]) > MAX_PUMP_TIMER || eeprom_read_dword(p_eemems[i]) <= 1000)
     {
-      eeprom_update_dword(&p_eemems[i], DEFAULT_PUMP_TIMER);
+      eeprom_update_dword(p_eemems[i], DEFAULT_PUMP_TIMER);
+    }
+    if ((eeprom_read_byte(d_eemems[i]) > 14) || (eeprom_read_byte(d_eemems[i]) == 0))
+    {
+      eeprom_update_byte(d_eemems[i], MIN_DAY_COUNT_DEF);
+    }
+    if ((eeprom_read_byte(md_eemems[i]) > 14) || (eeprom_read_byte(md_eemems[i]) == 0))
+    {
+      eeprom_update_byte(md_eemems[i], MAX_DAY_COUNT_DEF);
     }
   }
 }
@@ -905,24 +1075,32 @@ void checkSerial()
       Serial.println();
       Serial.println("=== Channels state ===");
       Serial.println();
-      for (byte i = 0; i < 3; i++)
+      for (byte i = 0; i < CHANNEL_COUNT; i++)
       {
         printChannelStatus(i);
       }
       break;
     case 50: // '2' - получение текущей влажности по каналам
-      if (!tasks.getTaskState(run_channel))
+      if (curMode == MODE_DEFAULT)
       {
-        manualStart(SNS_TESTING);
+        if (!tasks.getTaskState(run_channel))
+        {
+          manualStart(SNS_TESTING);
+        }
+        else
+        {
+          Serial.println("Denied, watering or metering is in progress");
+        }
       }
       else
       {
-        Serial.println("Denied, watering or metering is in progress");
+        Serial.println("Denied, system in settings mode");
       }
+
       Serial.println();
       break;
     default: // вывод данных по последнему замеру влажности по каналам
-      for (byte i = 0; i < 3; i++)
+      for (byte i = 0; i < CHANNEL_COUNT; i++)
       {
         printLastMeteringData(i);
       }
@@ -934,7 +1112,7 @@ void checkSerial()
 void printLastMeteringData(byte cnl)
 {
   Serial.print("Metering data, channel ");
-  Serial.print(cnl);
+  Serial.print(cnl + 1);
   Serial.print(": ");
   Serial.println(channels[cnl].m_data);
 }
@@ -943,7 +1121,7 @@ void printChannelStatus(byte cnl)
 {
   Serial.print("Channel "); // текущий статус канала
   Serial.print(cnl + 1);
-  if (!eeprom_read_byte(&c_eemems[cnl]))
+  if (!eeprom_read_byte(c_eemems[cnl]))
   {
     Serial.println(" not used");
   }
@@ -972,12 +1150,12 @@ void printChannelStatus(byte cnl)
       Serial.println("unknown");
       break;
     }
-    Serial.print("Pump: "); // текущий статус помпы
+    Serial.print("Pump state: "); // текущий статус помпы
     digitalRead(channels[cnl].pump_pin) ? Serial.println("power ON") : Serial.println("power OFF");
     Serial.print("Pump timeout, msec: "); // время работы помпы для канала
-    Serial.println(eeprom_read_dword(&p_eemems[cnl]));
+    Serial.println(eeprom_read_dword(p_eemems[cnl]));
     Serial.print("Humidity sensor:"); // текущий статус датчика влажности
-    if (!eeprom_read_byte(&hs_eemems[cnl]))
+    if (!eeprom_read_byte(hs_eemems[cnl]))
     {
       Serial.println(" not used");
     }
@@ -1006,11 +1184,15 @@ void printChannelStatus(byte cnl)
         break;
       }
       Serial.print("Humidity threshold: "); // порог влажности для канала
-      Serial.println(eeprom_read_word(&h_eemems[cnl]));
+      Serial.println(eeprom_read_word(h_eemems[cnl]));
       Serial.print("Humidity last data: "); // последний замер влажности для канала
       Serial.println(channels[cnl].m_data);
     }
-    Serial.print("Cycles count: "); // количество прошедших шестичасовых циклов
+    Serial.print("Set interval of days: "); // настройки минимального и максимального количества дней
+    Serial.print(eeprom_read_byte(d_eemems[cnl]));
+    Serial.print(" - "); // настройки минимального и максимального количества дней
+    Serial.println(eeprom_read_byte(md_eemems[cnl]));
+    Serial.print("Six-hour cycles passed: "); // количество прошедших шестичасовых циклов
     Serial.println(channels[cnl].min_max_count);
     Serial.print("Next point in "); // осталось времени до следующего цикла, час/мин
     uint32_t x = tasks.getNextTaskPoint(main_timer);

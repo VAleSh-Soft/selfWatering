@@ -15,7 +15,7 @@
 #define DEFAULT_PUMP_TIMER 10000ul     // значение времени работы помпы по умолчанию
 #define DEFAULT_HUMIDITY_THRESHOLD 600 // порог датчика влажности по умолчанию
 
-byte const CHANNEL_COUNT = 3; // количество каналов полива
+#define CHANNEL_COUNT 3 // количество каналов полива
 // ===================================================
 
 shTaskManager tasks(8); // создаем список задач
@@ -39,6 +39,7 @@ byte curBtnCount = 0;        // счетчик одиночных кликов �
 6 кликов – настройка максимального интервала (дней)
 7 кликов – включение/отключение датчика влажности для канала
 8 кликов – включение/отключение канала целиком
+2 коротких + 1 длинный - включение/отключение датчика света и пищалки об ошибках
 */
 
 shButton btn(BTN_PIN);
@@ -48,6 +49,8 @@ ChannelState channels[] = {
     (ChannelState){PUMP_1_PIN, HPOWER_1_SENSOR_PIN, HUMIDITY_1_SENSOR_PIN, CNL_DONE, SNS_METERING, 0, 0, 0, 0, 0},
     (ChannelState){PUMP_2_PIN, HPOWER_2_SENSOR_PIN, HUMIDITY_2_SENSOR_PIN, CNL_DONE, SNS_METERING, 0, 0, 0, 0, 0},
     (ChannelState){PUMP_3_PIN, HPOWER_3_SENSOR_PIN, HUMIDITY_3_SENSOR_PIN, CNL_DONE, SNS_METERING, 0, 0, 0, 0, 0}};
+// массив адресов ячеек памяти для сохранения настроек датчика света и пищалки: ss_eemems[2] - пищалка, ss_eemems[0] - датчик света
+uint16_t ss_eemems[] = {151, 152, 153};
 // массив адресов ячеек памяти для сохранения максимального количества дней
 uint16_t md_eemems[] = {146, 147, 148};
 // массив адресов ячеек памяти для сохранения минимального количества дней
@@ -91,8 +94,8 @@ void runChanel()
       channels[curChannel].channel_state = CNL_WORK;
       // если датчик еще в состоянии покоя, включить его и настроить канал на работу
       if (channels[curChannel].metering_flag == SNS_NONE)
-      { // продолжить только если прошло минимальное количество суток и в светлое время
-        if (channels[curChannel].min_max_count >= eeprom_read_byte(d_eemems[curChannel]) * 4 && analogRead(LIGHT_SENSOR_PIN) > LIGHT_SENSOR_THRESHOLD)
+      { // продолжить только если прошло минимальное количество суток и, если в настройках разрешено использование датчика света - в светлое время
+        if (channels[curChannel].min_max_count >= eeprom_read_byte(d_eemems[curChannel]) * 4 && (!eeprom_read_byte(ss_eemems[0]) || analogRead(LIGHT_SENSOR_PIN) > LIGHT_SENSOR_THRESHOLD))
         {
           // если использование датчика влажности для канала отключено
           if (!eeprom_read_byte(hs_eemems[curChannel]))
@@ -318,6 +321,56 @@ void setLedsDefault(byte i)
   }
 }
 
+// подсветка индикаторов каналов при настройке датчиков
+void setLeds_2(byte i)
+{
+  CRGB x = CRGB::Black;
+  if (i != 1)
+  {
+    if (i == curChannel)
+    {
+      static byte n = 0;
+      if (channels[i].m_count)
+      {
+        x = (i == 0) ? CRGB::Orange : CRGB::DarkCyan;
+      }
+      else
+      {
+        x = CRGB::Red;
+      }
+      // текущий канал подмигивает с частотой 1 сек
+      if (n >= 9)
+      { // если отключено, то подмаргивать цветом канала (на случай, если отключены все, чтобы было понятно, что за настройка делается), иначе подмаргивать просто отключением
+        if (channels[i].m_count)
+        {
+          x = CRGB::Black;
+        }
+        else
+        {
+          x = (i == 0) ? CRGB::Orange : CRGB::DarkCyan;
+        }
+      }
+      if (++n > 9)
+      {
+        n = 0;
+      }
+    }
+    else
+    {
+      switch (i)
+      {
+      case 0:
+        x = (eeprom_read_byte(ss_eemems[i])) ? CRGB::Orange : CRGB::Red;
+        break;
+      case 2:
+        x = (eeprom_read_byte(ss_eemems[i])) ? CRGB::DarkCyan : CRGB::Red;
+        break;
+      }
+    }
+  }
+  leds[i + 1] = x;
+}
+
 // подсветка индикаторов каналов при настройке времени работы помп
 void setLeds_3(byte i)
 {
@@ -455,8 +508,15 @@ void setLeds_7(byte i)
     }
     // текущий канал подмигивает с частотой 1 сек
     if (n >= 9)
-    {
-      leds[i + 1] = CRGB::Black;
+    { // если отключено, то подмаргивать цветом канала (на случай, если отключены все, чтобы было понятно, что за настройка делается), иначе подмаргивать просто отключением
+      if (channels[i].m_count)
+      {
+        leds[i + 1] = CRGB::Black;
+      }
+      else
+      {
+        leds[i + 1] = (curBtnCount == 8) ? CRGB::Green : CRGB::Blue;
+      }
     }
   }
   else
@@ -509,6 +569,9 @@ void setLeds()
     case MODE_SETTING:
       switch (curBtnCount)
       {
+      case 2:
+        setLeds_2(i);
+        break;
       case 3:
         setLeds_3(i);
         break;
@@ -555,7 +618,10 @@ void runErrorBuzzer()
 
   if (pgm_read_dword(&pick[0][n]) > 0)
   {
-    tone(BUZZER_PIN, pgm_read_dword(&pick[0][n]), pgm_read_dword(&pick[1][n]));
+    if (eeprom_read_byte(ss_eemems[2]))
+    { // пищалка срабатывает если только это разрешено в настройках; проблескивание белым будет в любом случае
+      tone(BUZZER_PIN, pgm_read_dword(&pick[0][n]), pgm_read_dword(&pick[1][n]));
+    }
     // в момент включения звука индикаторы каналов с ошибками включить белым
     for (byte i = 0; i < 4; i++)
     {
@@ -610,7 +676,7 @@ void runSetBuzzer()
   }
   else
   { // если только что включен режим настройки, то дать серию коротких пиков в зависимости от режима
-    if ((curBtnCount >= 3) && (curBtnCount <= 8))
+    if ((curBtnCount >= 2) && (curBtnCount <= 8))
     {
       tone(BUZZER_PIN, pgm_read_dword(&pick[0][n]), pgm_read_dword(&pick[1][n]));
       tasks.setTaskInterval(set_buzzer_on, pgm_read_dword(&pick[1][n]), true);
@@ -652,7 +718,7 @@ void isBtnClosed_3(uint32_t _tmr, uint32_t &_result)
     digitalWrite(channels[curChannel].pump_pin, HIGH);
     channels[curChannel].p_timer = _tmr;
   }
-  else
+  else if (channels[curChannel].flag == FL_RUN_DATA)
   { // если истекло максимальное разрешенное время работы помпы, остановить ее
     if (_tmr - channels[curChannel].p_timer >= MAX_PUMP_TIMER)
     {
@@ -660,6 +726,15 @@ void isBtnClosed_3(uint32_t _tmr, uint32_t &_result)
       tone(BUZZER_PIN, 2500, 300);
       _result = MAX_PUMP_TIMER;
       channels[curChannel].flag = FL_STOP_DATA;
+    }
+  }
+  else
+  { // если идет проверочный слив воды, и заданное время вышло, остановить помпу
+    if (_tmr - channels[curChannel].p_timer >= eeprom_read_dword(p_eemems[curChannel]))
+    {
+      digitalWrite(channels[curChannel].pump_pin, LOW);
+      tone(BUZZER_PIN, 2500, 300);
+      channels[curChannel].flag = FL_NONE;
     }
   }
 }
@@ -705,6 +780,9 @@ void getCurrentData()
   // поле m_count используется только при измерении влажности, поэтому его можно с чистой совестью использовать в процессе настроек
   switch (curBtnCount)
   {
+  case 2:
+    channels[curChannel].m_count = eeprom_read_byte(ss_eemems[curChannel]);
+    break;
   case 4:
     channels[curChannel].m_count = eeprom_read_word(h_eemems[curChannel]) / 100 - 3;
     break;
@@ -743,6 +821,12 @@ void runSetChannels()
   {
     return;
   }
+  // проверка настройки помпы
+  if ((curBtnCount == 3) && (channels[curChannel].flag == FL_CHECK_DATA))
+  {
+    isBtnClosed_3(tmr, result);
+  }
+
   // управление данными
   if (channels[curChannel].flag == FL_RUN_DATA)
   {
@@ -759,6 +843,7 @@ void runSetChannels()
       case 6:
         isBtnClosed_4();
         break;
+      case 2:
       case 7:
       case 8:
         tone(BUZZER_PIN, 2500, 100);
@@ -777,7 +862,7 @@ void runSetChannels()
         result = tmr - channels[curChannel].p_timer;
         if (result < 1000)
         {
-          result = DEFAULT_PUMP_TIMER;
+          channels[curChannel].flag = FL_NONE;
         }
         break;
       }
@@ -790,6 +875,9 @@ void runSetChannels()
     {
       switch (curBtnCount)
       {
+      case 2:
+        eeprom_update_byte(ss_eemems[curChannel], channels[curChannel].m_count);
+        break;
       case 3:
         eeprom_update_dword(p_eemems[curChannel], result);
         break;
@@ -817,6 +905,10 @@ void runSetChannels()
     else
     {
       curChannel++;
+      if ((curBtnCount == 2) && (curChannel == 1))
+      {
+        curChannel = 2;
+      }
     }
     if (curChannel < CHANNEL_COUNT)
     {
@@ -910,8 +1002,12 @@ void checkButton()
         manualStart(SNS_METERING);
       }
       break;
-    // в режиме настройки просто перезапустить таймер автовыхода
+    // в режиме настройки просто перезапустить таймер автовыхода; в случае настройки помпы поднять флаг тестового запуска помпы
     case MODE_SETTING:
+      if ((curBtnCount == 3) && (channels[curChannel].flag != FL_RUN_DATA))
+      {
+        channels[curChannel].flag = FL_CHECK_DATA;
+      }
       tasks.restartTask(return_to_def_mode);
       break;
     }
@@ -926,10 +1022,15 @@ void checkButton()
       {
         manualStart(SNS_NONE, false);
       }
-      else
+      else if (n <= 1)
       {
         manualStart(SNS_WATERING);
       }
+      else if (n == 3)
+      {
+        n = 200;
+      }
+
       break;
     // установить флаг изменения данных
     case MODE_SETTING:
@@ -940,13 +1041,21 @@ void checkButton()
     break;
   }
   // проверить, сколько одиночных кликов кнопки сделано
-  if (millis() - btn_timer > 1000)
+  if ((curBtnCount == 0) && !tasks.getTaskState(run_channel))
   {
-    if (((n >= 3) && (n <= 8)) && (curBtnCount == 0) && !tasks.getTaskState(run_channel))
+    if (n == 200)
     {
-      curBtnCount = n;
+      curBtnCount = 2;
+      n = 0;
     }
-    n = 0;
+    else if (millis() - btn_timer > 1000)
+    {
+      if (((n >= 3) && (n <= 8)))
+      {
+        curBtnCount = n;
+      }
+      n = 0;
+    }
   }
 }
 
@@ -1021,7 +1130,7 @@ void loop()
 {
   tasks.tick();
   checkButton();
-  if ((curBtnCount >= 3) && (curBtnCount <= 8))
+  if ((curBtnCount >= 2) && (curBtnCount <= 8))
   {
     runSetChannels();
   }
@@ -1064,15 +1173,36 @@ void checkSerial()
       Serial.print("return_to_def_mode: ");
       Serial.println(tasks.getTaskState(return_to_def_mode));
       Serial.println();
+
       Serial.println("=== Sensors state ===");
       Serial.println();
       // показания датчика света
-      Serial.print("Light sensor data: ");
-      Serial.println(analogRead(LIGHT_SENSOR_PIN));
+      Serial.print("Light sensor ");
+      if (!eeprom_read_byte(ss_eemems[0]))
+      {
+        Serial.println(" not used");
+      }
+      else
+      {
+        Serial.println(" used");
+        Serial.print("Light sensor data: ");
+        Serial.println(analogRead(LIGHT_SENSOR_PIN));
+      }
       // наличие воды по датчику уровня
       Serial.print("Water sensor data: ");
       digitalRead(WATER_LEVEL_SENSOR_PIN) ? Serial.println("yes") : Serial.println("no");
+      // использование пищалки в сообщениях об ошибках
+      Serial.print("Error buzzer ");
+      if (!eeprom_read_byte(ss_eemems[2]))
+      {
+        Serial.println(" not used");
+      }
+      else
+      {
+        Serial.println(" used");
+      }
       Serial.println();
+      
       Serial.println("=== Channels state ===");
       Serial.println();
       for (byte i = 0; i < CHANNEL_COUNT; i++)

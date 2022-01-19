@@ -905,9 +905,17 @@ void runSetChannels()
     else
     {
       curChannel++;
-      if ((curBtnCount == 2) && (curChannel == 1))
+      if (curBtnCount == 2)
       {
-        curChannel = 2;
+        switch (curChannel)
+        {
+        case 1:
+          curChannel = 2; // перескочить со первого канала сразу на третий
+          break;
+        case 2: // с третьего канала сразу на выход
+          curChannel = CHANNEL_COUNT;
+          break;
+        }
       }
     }
     if (curChannel < CHANNEL_COUNT)
@@ -1092,7 +1100,7 @@ void setup()
   error_buzzer_on = tasks.addTask(300000, runErrorBuzzer, false);    // таймер сигнала ошибки
   rescan_start = tasks.addTask(60000, rescanStart, false);           // таймер перепроверки влажности
   set_buzzer_on = tasks.addTask(1000, runSetBuzzer, false);          // таймер пищалки режима настройи
-  run_set_channels = tasks.addTask(1000, runSetChannels, false);     // таймер режима настройки
+  run_set_channels = tasks.addTask(100, runSetChannels, false);      // таймер режима настройки
   return_to_def_mode = tasks.addTask(60000, returnToDefMode, false); // таймер автовыхода из настроек
 
   // ==== проверка каналов на использование датчика влажности; если для какого-то канала датчик отключен, отключить замер влажности при старте программы; иначе сразу будет включен полив канала;
@@ -1130,7 +1138,7 @@ void loop()
 {
   tasks.tick();
   checkButton();
-  if ((curBtnCount >= 2) && (curBtnCount <= 8))
+  if ((curBtnCount >= 2) && (curBtnCount <= 8) && !tasks.getTaskState(run_set_channels))
   {
     runSetChannels();
   }
@@ -1202,7 +1210,7 @@ void checkSerial()
         Serial.println(" used");
       }
       Serial.println();
-      
+
       Serial.println("=== Channels state ===");
       Serial.println();
       for (byte i = 0; i < CHANNEL_COUNT; i++)

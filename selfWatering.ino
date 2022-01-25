@@ -46,22 +46,24 @@ shButton btn(BTN_PIN);
 
 // массив каналов полива
 ChannelState channels[] = {
-    (ChannelState){PUMP_1_PIN, HPOWER_1_SENSOR_PIN, HUMIDITY_1_SENSOR_PIN, CNL_DONE, SNS_METERING, 0, 0, 0, 0, 0},
-    (ChannelState){PUMP_2_PIN, HPOWER_2_SENSOR_PIN, HUMIDITY_2_SENSOR_PIN, CNL_DONE, SNS_METERING, 0, 0, 0, 0, 0},
-    (ChannelState){PUMP_3_PIN, HPOWER_3_SENSOR_PIN, HUMIDITY_3_SENSOR_PIN, CNL_DONE, SNS_METERING, 0, 0, 0, 0, 0}};
-// массив адресов ячеек памяти для сохранения настроек датчика света и пищалки: ss_eemems[2] - пищалка, ss_eemems[0] - датчик света
+    (ChannelState){PUMP_1_PIN, HPOWER_1_SENSOR_PIN, HUMIDITY_1_SENSOR_PIN, CNL_DONE, SNS_TESTING, 0, 0, 0, 0, 0},
+    (ChannelState){PUMP_2_PIN, HPOWER_2_SENSOR_PIN, HUMIDITY_2_SENSOR_PIN, CNL_DONE, SNS_TESTING, 0, 0, 0, 0, 0},
+    (ChannelState){PUMP_3_PIN, HPOWER_3_SENSOR_PIN, HUMIDITY_3_SENSOR_PIN, CNL_DONE, SNS_TESTING, 0, 0, 0, 0, 0}};
+// массив адресов ячеек памяти для сохранения данных по пройденным циклам min_max_count (uint8_t)
+uint16_t mm_eemems[] = {156, 157, 158};
+// массив адресов ячеек памяти для сохранения настроек датчика света и пищалки: ss_eemems[2] - пищалка, ss_eemems[0] - датчик света (uint8_t)
 uint16_t ss_eemems[] = {151, 152, 153};
-// массив адресов ячеек памяти для сохранения максимального количества дней
+// массив адресов ячеек памяти для сохранения максимального количества дней (uint8_t)
 uint16_t md_eemems[] = {146, 147, 148};
-// массив адресов ячеек памяти для сохранения минимального количества дней
+// массив адресов ячеек памяти для сохранения минимального количества дней (uint8_t)
 uint16_t d_eemems[] = {141, 142, 143};
-// массив адресов ячеек памяти для сохранения данных по включенным датчикам влажности
+// массив адресов ячеек памяти для сохранения данных по включенным датчикам влажности (uint8_t)
 uint16_t hs_eemems[] = {135, 136, 137};
-// массив адресов ячеек памяти для сохранения данных по включенным каналам
+// массив адресов ячеек памяти для сохранения данных по включенным каналам (uint8_t)
 uint16_t c_eemems[] = {130, 131, 132};
-// массив адресов ячеек памяти для сохранения уровней влажности по каналам
+// массив адресов ячеек памяти для сохранения уровней влажности по каналам (uint16_t)
 uint16_t h_eemems[] = {120, 122, 124};
-// массив адресов ячеек памяти для сохранения настроек помпы по каналам
+// массив адресов ячеек памяти для сохранения настроек помпы по каналам (uint16_t)
 uint16_t p_eemems[] = {100, 104, 108};
 // массив адресных светодиодов-индикаторов
 CRGB leds[CHANNEL_COUNT + 1];
@@ -86,10 +88,11 @@ void runChanel()
   { // если канал используется и еще не в рабочем режиме, перевести его в рабочий режим
     if ((channels[curChannel].channel_state == CNL_DONE) && eeprom_read_byte(c_eemems[curChannel]))
     {
-      // и попутно увеличить счетчик срабатывания, если это не ручной запуск; при первом запуске счетчик увеличить в любом случае
-      if (channels[curChannel].metering_flag == SNS_NONE || channels[curChannel].min_max_count == 0)
+      // и попутно увеличить счетчик срабатывания, если это не ручной запуск;
+      if (channels[curChannel].metering_flag == SNS_NONE)
       {
         channels[curChannel].min_max_count++;
+        eeprom_update_byte(mm_eemems[curChannel], channels[curChannel].min_max_count);
       }
       channels[curChannel].channel_state = CNL_WORK;
       // если датчик еще в состоянии покоя, включить его и настроить канал на работу
@@ -214,6 +217,7 @@ void cnlMetering(byte channel)
           else
           {
             channels[channel].min_max_count = 0;
+            eeprom_update_byte(mm_eemems[curChannel], channels[curChannel].min_max_count);
             if (channels[channel].channel_state == CNL_RESCAN)
             {
               channels[channel].channel_state = CNL_CHECK;
@@ -1103,15 +1107,6 @@ void setup()
   run_set_channels = tasks.addTask(100, runSetChannels, false);      // таймер режима настройки
   return_to_def_mode = tasks.addTask(60000, returnToDefMode, false); // таймер автовыхода из настроек
 
-  // ==== проверка каналов на использование датчика влажности; если для какого-то канала датчик отключен, отключить замер влажности при старте программы; иначе сразу будет включен полив канала;
-  for (byte i = 0; i < CHANNEL_COUNT; i++)
-  {
-    if (!eeprom_read_byte(hs_eemems[i]))
-    {
-      channels[i].metering_flag = SNS_NONE;
-    }
-  }
-
   // ==== верификация настроек по каналам ============
   for (byte i = 0; i < CHANNEL_COUNT; i++)
   {
@@ -1127,10 +1122,15 @@ void setup()
     {
       eeprom_update_byte(d_eemems[i], MIN_DAY_COUNT_DEF);
     }
-    if ((eeprom_read_byte(md_eemems[i]) > 14) || (eeprom_read_byte(md_eemems[i]) == 0))
+    if ((eeprom_read_byte(md_eemems[i]) > 28) || (eeprom_read_byte(md_eemems[i]) == 0))
     {
       eeprom_update_byte(md_eemems[i], MAX_DAY_COUNT_DEF);
     }
+    if ((eeprom_read_byte(mm_eemems[i]) > 112))
+    {
+      eeprom_update_byte(mm_eemems[i], 0);
+    }
+    channels[i].min_max_count = eeprom_read_byte(mm_eemems[i]);
   }
 }
 

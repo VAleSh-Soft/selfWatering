@@ -14,8 +14,6 @@
 #define MAX_PUMP_TIMER 60000ul         // максимальное время работы помпы, мс
 #define DEFAULT_PUMP_TIMER 10000ul     // значение времени работы помпы по умолчанию
 #define DEFAULT_HUMIDITY_THRESHOLD 600 // порог датчика влажности по умолчанию
-
-#define CHANNEL_COUNT 3 // количество каналов полива
 // ===================================================
 
 shTaskManager tasks(8); // создаем список задач
@@ -46,25 +44,211 @@ shButton btn(BTN_PIN);
 
 // массив каналов полива
 ChannelState channels[] = {
-    (ChannelState){PUMP_1_PIN, HPOWER_1_SENSOR_PIN, HUMIDITY_1_SENSOR_PIN, CNL_DONE, SNS_TESTING, 0, 0, 0, 0, 0},
-    (ChannelState){PUMP_2_PIN, HPOWER_2_SENSOR_PIN, HUMIDITY_2_SENSOR_PIN, CNL_DONE, SNS_TESTING, 0, 0, 0, 0, 0},
-    (ChannelState){PUMP_3_PIN, HPOWER_3_SENSOR_PIN, HUMIDITY_3_SENSOR_PIN, CNL_DONE, SNS_TESTING, 0, 0, 0, 0, 0}};
+#if (CHANNEL_COUNT > 0)
+    (ChannelState){PUMP_1_PIN, HPOWER_1_SENSOR_PIN, HUMIDITY_1_SENSOR_PIN, CNL_DONE, SNS_TESTING, 0, 0, 0, 0, 0}
+#endif
+#if (CHANNEL_COUNT > 1)
+    ,
+    (ChannelState){PUMP_2_PIN, HPOWER_2_SENSOR_PIN, HUMIDITY_2_SENSOR_PIN, CNL_DONE, SNS_TESTING, 0, 0, 0, 0, 0}
+#endif
+#if (CHANNEL_COUNT > 2)
+    ,
+    (ChannelState){PUMP_3_PIN, HPOWER_3_SENSOR_PIN, HUMIDITY_3_SENSOR_PIN, CNL_DONE, SNS_TESTING, 0, 0, 0, 0, 0}
+#endif
+#if (CHANNEL_COUNT > 3)
+    ,
+    (ChannelState){PUMP_4_PIN, HPOWER_4_SENSOR_PIN, HUMIDITY_4_SENSOR_PIN, CNL_DONE, SNS_TESTING, 0, 0, 0, 0, 0}
+#endif
+#if (CHANNEL_COUNT == 5)
+    ,
+    (ChannelState){PUMP_5_PIN, HPOWER_5_SENSOR_PIN, HUMIDITY_5_SENSOR_PIN, CNL_DONE, SNS_TESTING, 0, 0, 0, 0, 0}
+#endif
+};
+
 // массив адресов ячеек памяти для сохранения данных по пройденным циклам min_max_count (uint8_t)
-uint16_t mm_eemems[] = {156, 157, 158};
+uint16_t mm_eemems[] = {
+#if (CHANNEL_COUNT > 0)
+    155
+#endif
+#if (CHANNEL_COUNT > 1)
+    ,
+    156
+#endif
+#if (CHANNEL_COUNT > 2)
+    ,
+    157
+#endif
+#if (CHANNEL_COUNT > 3)
+    ,
+    158
+#endif
+#if (CHANNEL_COUNT == 5)
+    ,
+    159
+#endif
+};
+
 // массив адресов ячеек памяти для сохранения настроек датчика света и пищалки: ss_eemems[2] - пищалка, ss_eemems[0] - датчик света (uint8_t)
-uint16_t ss_eemems[] = {151, 152, 153};
+uint16_t ss_eemems[] = {
+#if (CHANNEL_COUNT > 0)
+    150
+#endif
+#if (CHANNEL_COUNT > 1)
+    ,
+    151
+#endif
+#if (CHANNEL_COUNT > 2)
+    ,
+    152
+#endif
+#if (CHANNEL_COUNT > 3)
+    ,
+    153
+#endif
+#if (CHANNEL_COUNT == 5)
+    ,
+    154
+#endif
+};
+
 // массив адресов ячеек памяти для сохранения максимального количества дней (uint8_t)
-uint16_t md_eemems[] = {146, 147, 148};
+uint16_t md_eemems[] = {
+#if (CHANNEL_COUNT > 0)
+    145
+#endif
+#if (CHANNEL_COUNT > 1)
+    ,
+    146
+#endif
+#if (CHANNEL_COUNT > 2)
+    ,
+    147
+#endif
+#if (CHANNEL_COUNT > 3)
+    ,
+    148
+#endif
+#if (CHANNEL_COUNT == 5)
+    ,
+    149
+#endif
+};
+
 // массив адресов ячеек памяти для сохранения минимального количества дней (uint8_t)
-uint16_t d_eemems[] = {141, 142, 143};
+uint16_t d_eemems[] = {
+#if (CHANNEL_COUNT > 0)
+    140
+#endif
+#if (CHANNEL_COUNT > 1)
+    ,
+    141
+#endif
+#if (CHANNEL_COUNT > 2)
+    ,
+    142
+#endif
+#if (CHANNEL_COUNT > 3)
+    ,
+    143
+#endif
+#if (CHANNEL_COUNT == 5)
+    ,
+    144
+#endif
+};
+
 // массив адресов ячеек памяти для сохранения данных по включенным датчикам влажности (uint8_t)
-uint16_t hs_eemems[] = {135, 136, 137};
+uint16_t hs_eemems[] = {
+#if (CHANNEL_COUNT > 0)
+    135
+#endif
+#if (CHANNEL_COUNT > 1)
+    ,
+    136
+#endif
+#if (CHANNEL_COUNT > 2)
+    ,
+    137
+#endif
+#if (CHANNEL_COUNT > 3)
+    ,
+    138
+#endif
+#if (CHANNEL_COUNT == 5)
+    ,
+    139
+#endif
+};
+
 // массив адресов ячеек памяти для сохранения данных по включенным каналам (uint8_t)
-uint16_t c_eemems[] = {130, 131, 132};
+uint16_t c_eemems[] = {
+#if (CHANNEL_COUNT > 0)
+    130
+#endif
+#if (CHANNEL_COUNT > 1)
+    ,
+    131
+#endif
+#if (CHANNEL_COUNT > 2)
+    ,
+    132
+#endif
+#if (CHANNEL_COUNT > 3)
+    ,
+    133
+#endif
+#if (CHANNEL_COUNT == 5)
+    ,
+    134
+#endif
+};
+
 // массив адресов ячеек памяти для сохранения уровней влажности по каналам (uint16_t)
-uint16_t h_eemems[] = {120, 122, 124};
+uint16_t h_eemems[] = {
+#if (CHANNEL_COUNT > 0)
+    120
+#endif
+#if (CHANNEL_COUNT > 1)
+    ,
+    122
+#endif
+#if (CHANNEL_COUNT > 2)
+    ,
+    124
+#endif
+#if (CHANNEL_COUNT > 3)
+    ,
+    126
+#endif
+#if (CHANNEL_COUNT == 5)
+    ,
+    128
+#endif
+};
+
 // массив адресов ячеек памяти для сохранения настроек помпы по каналам (uint16_t)
-uint16_t p_eemems[] = {100, 104, 108};
+uint16_t p_eemems[] = {
+#if (CHANNEL_COUNT > 0)
+    100
+#endif
+#if (CHANNEL_COUNT > 1)
+    ,
+    104
+#endif
+#if (CHANNEL_COUNT > 2)
+    ,
+    108
+#endif
+#if (CHANNEL_COUNT > 3)
+    ,
+    112
+#endif
+#if (CHANNEL_COUNT == 5)
+    ,
+    116
+#endif
+};
+
 // массив адресных светодиодов-индикаторов
 CRGB leds[CHANNEL_COUNT + 1];
 
@@ -264,7 +448,7 @@ void cnlWatering(byte channel)
 byte getErrors()
 {
   byte result = 1;
-  for (byte i = 0; i < 4; i++)
+  for (byte i = 0; i < CHANNEL_COUNT + 1; i++)
   {
     bool f = (i == 0) ? !digitalRead(WATER_LEVEL_SENSOR_PIN) : channels[i - 1].channel_state == CNL_ERROR;
     (f) ? (result) |= (1UL << (i)) : (result) &= ~(1UL << (i));
@@ -602,7 +786,7 @@ void runErrorBuzzer()
   static const PROGMEM uint32_t pick[2][12] = {
       {2000, 0, 2000, 0, 2000, 0, 2000, 0, 2000, 0, 2000, 0},
       {50, 100, 50, 500, 50, 100, 50, 500, 50, 100, 50, BUZZER_TIMEOUT * 1000ul}};
-  static CRGB _leds[4];
+  static CRGB _leds[CHANNEL_COUNT + 1];
 
   // если таймер пищалки еще не запущен, запустить его, иначе проверить на наличие ошибок и, если ошибок уже нет, остановить таймер
   if (!tasks.getTaskState(error_buzzer_on))
@@ -627,7 +811,7 @@ void runErrorBuzzer()
       tone(BUZZER_PIN, pgm_read_dword(&pick[0][n]), pgm_read_dword(&pick[1][n]));
     }
     // в момент включения звука индикаторы каналов с ошибками включить белым
-    for (byte i = 0; i < 4; i++)
+    for (byte i = 0; i < CHANNEL_COUNT + 1; i++)
     {
       _leds[i] = leds[i];
       if (i == 0)
@@ -648,7 +832,7 @@ void runErrorBuzzer()
   }
   else
   { // иначе возвращать цвета индикаторов к цветам по умолчанию
-    for (byte i = 0; i < 4; i++)
+    for (byte i = 0; i < CHANNEL_COUNT + 1; i++)
     {
       leds[i] = _leds[i];
     }
@@ -1079,7 +1263,7 @@ void setup()
   Serial.begin(9600);
 #endif
 
-  FastLED.addLeds<WS2812B, LEDS_PIN, GRB>(leds, 4);
+  FastLED.addLeds<WS2812B, LEDS_PIN, GRB>(leds, CHANNEL_COUNT + 1);
   FastLED.setBrightness(5);
 
   // ==== настройка кнопки ===========================

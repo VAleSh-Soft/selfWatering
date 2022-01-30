@@ -3,24 +3,45 @@
 
 #define LOG_ON // ведение отладочного лога
 
+#define CHANNEL_COUNT 3 // количество каналов полива (от 1 до 5)
+
 // ==== пины =========================================
-#define LEDS_PIN 12              // пин подключения адресных светодиодов
+#define LEDS_PIN 12              // пин подключения адресных светодиодов (количество каналов + 1 для датчика уровня)
 #define LIGHT_SENSOR_PIN A6      // пин датчика света
 #define BTN_PIN 2                // пин подключения кнопки
 #define BUZZER_PIN 3             // пин пищалки
 #define WATER_LEVEL_SENSOR_PIN 4 // пин датчика уровня воды в емкости
 
+#if (CHANNEL_COUNT > 0)
 #define HPOWER_1_SENSOR_PIN 5    // пин питания первого датчика влажности
 #define HUMIDITY_1_SENSOR_PIN A0 // пин данных первого датчика влажности
 #define PUMP_1_PIN 6             // пин управления первой помпой
+#endif
 
+#if (CHANNEL_COUNT > 1)
 #define HPOWER_2_SENSOR_PIN 7    // пин питания второго датчика влажности
 #define HUMIDITY_2_SENSOR_PIN A1 // пин данных второго датчика влажности
 #define PUMP_2_PIN 8             // пин управления второй помпой
+#endif
 
+#if (CHANNEL_COUNT > 2)
 #define HPOWER_3_SENSOR_PIN 9    // пин питания третьего датчика влажности
 #define HUMIDITY_3_SENSOR_PIN A2 // пин данных третьего датчика влажности
 #define PUMP_3_PIN 10            // пин управления третьей помпой
+#endif
+
+#if (CHANNEL_COUNT > 3)
+#define HPOWER_4_SENSOR_PIN 11   // пин питания четвертого датчика влажности
+#define HUMIDITY_4_SENSOR_PIN A3 // пин данных четвертого датчика влажности
+#define PUMP_4_PIN 12            // пин управления четвертой помпой
+#endif
+
+#if (CHANNEL_COUNT == 5)
+#define HPOWER_5_SENSOR_PIN A4   // пин питания пятого датчика влажности
+#define HUMIDITY_5_SENSOR_PIN A7 // пин данных пятого датчика влажности
+#define PUMP_5_PIN A5            // пин управления пятой помпой
+#endif
+/* Не нужно занимать пины 0 и 1, т.к. через них идет передача данных Serial */
 
 // ==== режим работы =================================
 

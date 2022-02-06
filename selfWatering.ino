@@ -6,8 +6,9 @@
 #include "selfWatering.h"
 
 // ==== настройки ====================================
-#define MAX_DAY_COUNT_DEF 14           // максимальное количество суток, по истечении которого полив будет включен безусловно
-#define MIN_DAY_COUNT_DEF 7            // минимальное количество суток, до истечения которого полив не будет включен
+#define FIRMWARE_VERSION "3.7.0"       // версия прошивки
+#define MAX_DAY_COUNT_DEF 14           // максимальное количество суток, по истечении которого полив будет включен безусловно, значение по умолчанию
+#define MIN_DAY_COUNT_DEF 7            // минимальное количество суток, до истечения которого полив не будет включен, значение по умолчанию
 #define METERING_COUNT 8               // количество замеров влажности для усреднения результата; желательно задавать значение, равное степени числа 2 (2, 4, 8, 16 и т.д.)
 #define BUZZER_TIMEOUT 300             // интервал срабатывания пищалки в режиме "ошибка" в секундах
 #define LIGHT_SENSOR_THRESHOLD 150     // минимальные показания датчика света (0-1023)
@@ -65,31 +66,12 @@ ChannelState channels[] = {
 #endif
 };
 
+// адреса ячеек памяти для сохранения настроек датчика света и пищалки
+uint16_t ss_eemems_1 = 156; // пищалка (uint8_t)
+uint16_t ss_eemems_0 = 155; // датчик света (uint8_t)
+
 // массив адресов ячеек памяти для сохранения данных по пройденным циклам min_max_count (uint8_t)
 uint16_t mm_eemems[] = {
-#if (CHANNEL_COUNT > 0)
-    155
-#endif
-#if (CHANNEL_COUNT > 1)
-    ,
-    156
-#endif
-#if (CHANNEL_COUNT > 2)
-    ,
-    157
-#endif
-#if (CHANNEL_COUNT > 3)
-    ,
-    158
-#endif
-#if (CHANNEL_COUNT == 5)
-    ,
-    159
-#endif
-};
-
-// массив адресов ячеек памяти для сохранения настроек датчика света и пищалки: ss_eemems[2] - пищалка, ss_eemems[0] - датчик света (uint8_t)
-uint16_t ss_eemems[] = {
 #if (CHANNEL_COUNT > 0)
     150
 #endif
@@ -249,7 +231,7 @@ uint16_t p_eemems[] = {
 #endif
 };
 
-// массив адресных светодиодов-индикаторов
+// массив адресных светодиодов-индикаторов, первый - индикатор уровня воды, остальные - индикаторы каналов
 CRGB leds[CHANNEL_COUNT + 1];
 
 // ===================================================
@@ -282,7 +264,7 @@ void runChanel()
       // если датчик еще в состоянии покоя, включить его и настроить канал на работу
       if (channels[curChannel].metering_flag == SNS_NONE)
       { // продолжить только если прошло минимальное количество суток и, если в настройках разрешено использование датчика света - в светлое время
-        if (channels[curChannel].min_max_count >= eeprom_read_byte(d_eemems[curChannel]) * 4 && (!eeprom_read_byte(ss_eemems[0]) || analogRead(LIGHT_SENSOR_PIN) > LIGHT_SENSOR_THRESHOLD))
+        if (channels[curChannel].min_max_count >= eeprom_read_byte(d_eemems[curChannel]) * 4 && (!eeprom_read_byte(ss_eemems_0) || analogRead(LIGHT_SENSOR_PIN) > LIGHT_SENSOR_THRESHOLD))
         {
           // если использование датчика влажности для канала отключено
           if (!eeprom_read_byte(hs_eemems[curChannel]))
@@ -382,7 +364,9 @@ void cnlMetering(byte channel)
         // если после полива влажность недостаточна, включить перепроверку через минуту, чтобы дать возможность воде разойтись в почве и дойти до датчика; если недостаточна и после перепроверки, включить ошибку и сигнализатор; иначе считать задачу выполненной и обнулить счетчик пустых циклов
         case CNL_CHECK:
         case CNL_RESCAN:
-          if (p > 300)
+          uint16_t t = eeprom_read_word(h_eemems[channel]);
+          // полив считать совершившимся, если датчик влажности выдает на 200 ниже порогового значения (ниже 100 для порога 400)
+          if (p > (t >= 500) ? t - 200 : t - 100)
           {
             if (channels[channel].channel_state == CNL_RESCAN)
             {
@@ -447,7 +431,7 @@ void cnlWatering(byte channel)
 
 byte getErrors()
 {
-  byte result = 1;
+  byte result = 0;
   for (byte i = 0; i < CHANNEL_COUNT + 1; i++)
   {
     bool f = (i == 0) ? !digitalRead(WATER_LEVEL_SENSOR_PIN) : channels[i - 1].channel_state == CNL_ERROR;
@@ -509,16 +493,30 @@ void setLedsDefault(byte i)
   }
 }
 
-// подсветка индикаторов каналов при настройке датчиков
+// подсветка индикаторов каналов при настройке использования пищалки и датчика света
 void setLeds_2(byte i)
 {
   CRGB x = CRGB::Black;
-  if (i != 1)
+#if (CHANNEL_COUNT <= 2)
+  if ((i == 0) || (i == (CHANNEL_COUNT)))
+#else
+  if ((i == 0) || (i == (CHANNEL_COUNT - 1)))
+#endif
   {
     if (i == curChannel)
     {
       static byte n = 0;
-      if (channels[i].m_count)
+      static byte f = curChannel;
+
+      // если канал изменился, его индикатор начинает с "зажмуренного" состояния ))
+      if (f != curChannel)
+      {
+        n = 9;
+        f = curChannel;
+      }
+
+      byte h = (i == 0) ? 0 : 1;
+      if (((channels[0].m_count) >> (h)) & 0x01)
       {
         x = (i == 0) ? CRGB::Orange : CRGB::DarkCyan;
       }
@@ -529,7 +527,7 @@ void setLeds_2(byte i)
       // текущий канал подмигивает с частотой 1 сек
       if (n >= 9)
       { // если отключено, то подмаргивать цветом канала (на случай, если отключены все, чтобы было понятно, что за настройка делается), иначе подмаргивать просто отключением
-        if (channels[i].m_count)
+        if (((channels[0].m_count) >> (h)) & 0x01)
         {
           x = CRGB::Black;
         }
@@ -545,18 +543,22 @@ void setLeds_2(byte i)
     }
     else
     {
-      switch (i)
+      if (i == 0)
       {
-      case 0:
-        x = (eeprom_read_byte(ss_eemems[i])) ? CRGB::Orange : CRGB::Red;
-        break;
-      case 2:
-        x = (eeprom_read_byte(ss_eemems[i])) ? CRGB::DarkCyan : CRGB::Red;
-        break;
+        x = (eeprom_read_byte(ss_eemems_0)) ? CRGB::Orange : CRGB::Red;
+      }
+      else
+      {
+        x = (eeprom_read_byte(ss_eemems_1)) ? CRGB::DarkCyan : CRGB::Red;
       }
     }
   }
+#if (CHANNEL_COUNT <= 2)
+  // если используются только один или два канала, то задействовать и индикатор уровня воды
+  leds[i] = x;
+#else
   leds[i + 1] = x;
+#endif
 }
 
 // подсветка индикаторов каналов при настройке времени работы помп
@@ -599,28 +601,38 @@ void setLeds_3(byte i)
 }
 
 // подсветка индикаторов каналов при настройке порога влажности и количества дней
-void setLeds_4(byte i)
+void setLeds_4(byte i, bool reset = false)
 {
   static byte n = 0;
   static byte k = 0;
-  static byte b = channels[curChannel].m_count;
+  static byte b = 0;
   static byte f = curChannel;
+
   // если канал изменился, сразу обновить данные
   if (f != curChannel)
   {
     f = curChannel;
     n = 0;
     k = 0;
-    b = channels[curChannel].m_count;
+    b = 0;
+  }
+
+  if (reset)
+  {
+    n = 0;
+    k = 0;
+    b = 0;
+    return;
   }
 
   if (i == curChannel)
   {
+    // если кнопка нажата, ничего не предпринимать - в этот момент идет настройка данных
     if (btn.isButtonClosed())
     {
       n = 0;
       k = 0;
-      b = channels[curChannel].m_count;
+      b = 0;
     }
     else
     {
@@ -629,7 +641,7 @@ void setLeds_4(byte i)
         if (++n > 5)
         {
           n = 0;
-          if (--b == 0)
+          if (++b >= channels[curChannel].m_count)
           {
             k++;
           }
@@ -642,8 +654,7 @@ void setLeds_4(byte i)
         {
           n = 0;
           k = 0;
-          b = channels[curChannel].m_count;
-          ;
+          b = 0;
         }
       }
     }
@@ -674,18 +685,19 @@ void setLeds_4(byte i)
 // подсветка индикаторов каналов при настройке включения/отключения датчиков влажности и каналов в целом
 void setLeds_7(byte i)
 {
-  static byte n = 8;
-  static byte f = curChannel;
-  // если канал изменился, его индикатор начинает с "зажмуренного" состояния ))
-  if (f != curChannel)
-  {
-    n = 9;
-    f = curChannel;
-  }
-
   // каналы подсвечивать синим (настройка датчиков), зеленым (настройка каналов) или красным (если датчик/канал отключен);
   if (i == curChannel)
   {
+    static byte n = 0;
+    static byte f = curChannel;
+
+    // если канал изменился, его индикатор начинает с "зажмуренного" состояния ))
+    if (f != curChannel)
+    {
+      n = 9;
+      f = curChannel;
+    }
+
     if (channels[i].m_count)
     {
       leds[i + 1] = (curBtnCount == 8) ? CRGB::Green : CRGB::Blue;
@@ -706,6 +718,10 @@ void setLeds_7(byte i)
         leds[i + 1] = (curBtnCount == 8) ? CRGB::Green : CRGB::Blue;
       }
     }
+    if (++n > 9)
+    {
+      n = 0;
+    }
   }
   else
   {
@@ -718,10 +734,6 @@ void setLeds_7(byte i)
       leds[i + 1] = (eeprom_read_byte(c_eemems[i])) ? CRGB::Green : CRGB::Red;
       break;
     }
-  }
-  if (++n > 9)
-  {
-    n = 0;
   }
 }
 
@@ -747,7 +759,16 @@ void setLeds()
   }
 
   // индикаторы каналов
+#if (CHANNEL_COUNT <= 2)
+  byte z = CHANNEL_COUNT;
+  if (curBtnCount == 2)
+  {
+    z = (CHANNEL_COUNT < 2) ? 2 : 3;
+  }
+  for (byte i = 0; i < z; i++)
+#else
   for (byte i = 0; i < CHANNEL_COUNT; i++)
+#endif
   {
     switch (curMode)
     {
@@ -806,7 +827,7 @@ void runErrorBuzzer()
 
   if (pgm_read_dword(&pick[0][n]) > 0)
   {
-    if (eeprom_read_byte(ss_eemems[2]))
+    if (eeprom_read_byte(ss_eemems_1))
     { // пищалка срабатывает если только это разрешено в настройках; проблескивание белым будет в любом случае
       tone(BUZZER_PIN, pgm_read_dword(&pick[0][n]), pgm_read_dword(&pick[1][n]));
     }
@@ -937,10 +958,10 @@ void isBtnClosed_4()
     max_data = 4;
     break;
   case 5:
-    max_data = 14;
+    max_data = MIN_DAY_COUNT_DEF * 2;
     break;
   case 6:
-    max_data = 28;
+    max_data = MAX_DAY_COUNT_DEF * 2;
     break;
   }
   // увеличивать значение каждые полсекунды, пока нажата кнопка
@@ -969,7 +990,9 @@ void getCurrentData()
   switch (curBtnCount)
   {
   case 2:
-    channels[curChannel].m_count = eeprom_read_byte(ss_eemems[curChannel]);
+    channels[0].m_count = 0;
+    (eeprom_read_byte(ss_eemems_0)) ? (channels[0].m_count) |= (1 << (0)) : (channels[0].m_count) &= ~(1 << (0));
+    (eeprom_read_byte(ss_eemems_1)) ? (channels[0].m_count) |= (1 << (1)) : (channels[0].m_count) &= ~(1 << (1));
     break;
   case 4:
     channels[curChannel].m_count = eeprom_read_word(h_eemems[curChannel]) / 100 - 3;
@@ -993,10 +1016,17 @@ void runSetChannels()
 {
   static uint32_t result = 0;
   uint32_t tmr = millis();
-
+  byte max_channel = CHANNEL_COUNT;
+#if (CHANNEL_COUNT <= 2)
+  if (curBtnCount == 2)
+  {
+    max_channel = (CHANNEL_COUNT < 2) ? 2 : 3;
+  }
+#endif
   if (!tasks.getTaskState(run_set_channels))
   {
     curChannel = 0;
+    channels[curChannel].m_count = 0;
     channels[curChannel].flag = FL_NONE;
     getCurrentData();
     curMode = MODE_SETTING;
@@ -1016,13 +1046,20 @@ void runSetChannels()
   }
 
   // управление данными
-  if (channels[curChannel].flag == FL_RUN_DATA)
+  if (((curBtnCount == 2) && (channels[0].flag == FL_RUN_DATA)) || (channels[curChannel].flag == FL_RUN_DATA))
   {
     if (btn.isButtonClosed())
     {
       tasks.restartTask(return_to_def_mode);
       switch (curBtnCount)
       {
+      case 2:
+        tone(BUZZER_PIN, 2500, 100);
+        byte z;
+        z = (curChannel == 0) ? curChannel : 1;
+        (channels[0].m_count) ^= (1 << z);
+        channels[0].flag = FL_STOP_DATA;
+        break;
       case 3:
         isBtnClosed_3(tmr, result);
         break;
@@ -1031,7 +1068,6 @@ void runSetChannels()
       case 6:
         isBtnClosed_4();
         break;
-      case 2:
       case 7:
       case 8:
         tone(BUZZER_PIN, 2500, 100);
@@ -1042,7 +1078,8 @@ void runSetChannels()
     }
     else
     {
-      channels[curChannel].flag = FL_STOP_DATA;
+      byte y = (curBtnCount == 2) ? 0 : curChannel;
+      channels[y].flag = FL_STOP_DATA;
       switch (curBtnCount)
       {
       case 3:
@@ -1057,14 +1094,22 @@ void runSetChannels()
     }
   }
   // управление сохранением изменений, переходом на другой канал или выходом из настроек
-  if ((channels[curChannel].flag == FL_SAVE_DATA) || (channels[curChannel].flag == FL_NEXT) || (channels[curChannel].flag == FL_EXIT))
+  byte k = (curBtnCount == 2) ? 0 : curChannel;
+  if ((channels[k].flag == FL_SAVE_DATA) || (channels[k].flag == FL_NEXT) || (channels[k].flag == FL_EXIT))
   {
-    if ((channels[curChannel].flag == FL_SAVE_DATA))
+    if (channels[k].flag == FL_SAVE_DATA)
     {
       switch (curBtnCount)
       {
       case 2:
-        eeprom_update_byte(ss_eemems[curChannel], channels[curChannel].m_count);
+        if (curChannel == 0)
+        {
+          eeprom_update_byte(ss_eemems_0, (((channels[0].m_count) >> (0)) & 0x01));
+        }
+        else
+        {
+          eeprom_update_byte(ss_eemems_1, (((channels[0].m_count) >> (1)) & 0x01));
+        }
         break;
       case 3:
         eeprom_update_dword(p_eemems[curChannel], result);
@@ -1086,40 +1131,47 @@ void runSetChannels()
         break;
       }
     }
-    if (channels[curChannel].flag == FL_EXIT)
+    if (channels[k].flag == FL_EXIT)
     {
-      curChannel = CHANNEL_COUNT;
+      curChannel = max_channel;
     }
     else
     {
       curChannel++;
-      if (curBtnCount == 2)
+      if ((curBtnCount == 2) && (curChannel == 1))
       {
-        switch (curChannel)
-        {
-        case 1:
-          curChannel = 2; // перескочить со первого канала сразу на третий
-          break;
-        case 2: // с третьего канала сразу на выход
-          curChannel = CHANNEL_COUNT;
-          break;
-        }
+        curChannel = max_channel - 1; // перескочить с первого канала сразу на последний
       }
     }
-    if (curChannel < CHANNEL_COUNT)
+    if (curChannel < max_channel)
     {
-      channels[curChannel].flag = FL_NONE;
+      byte y = (curBtnCount == 2) ? 0 : curChannel;
+      channels[y].m_count = 0;
+      channels[y].flag = FL_NONE;
       getCurrentData();
       tone(BUZZER_PIN, 2000, 100);
     }
   }
   // выход из настроек
-  if (curChannel >= CHANNEL_COUNT)
+  if (curChannel >= max_channel)
   {
     tasks.stopTask(run_set_channels);
     tasks.stopTask(return_to_def_mode);
     curMode = MODE_DEFAULT;
     curChannel = 0;
+    // в одноканальной системе или в многоканальной при выходе из настройки
+    // первого канала по таймауту могут не обнуляться счетчики в setLeds_4(),
+    // и при следующем входе в настройки 4-6 первый цикл моргания может не
+    // соответствовать реальным настройкам, поэтому принудительно обнуляем
+    // счетчики
+    switch (curBtnCount)
+    {
+    case 4:
+    case 5:
+    case 6:
+      setLeds_4(0, true);
+      break;
+    }
     curBtnCount = 0;
     runSetBuzzer();
   }
@@ -1180,7 +1232,8 @@ void checkButton()
     case MODE_SETTING:
       if (!tasks.getTaskState(set_buzzer_on))
       {
-        channels[curChannel].flag = (channels[curChannel].flag == FL_STOP_DATA) ? FL_SAVE_DATA : FL_NEXT;
+        byte z = (curBtnCount == 2) ? 0 : curChannel;
+        channels[z].flag = (channels[z].flag == FL_STOP_DATA) ? FL_SAVE_DATA : FL_NEXT;
       }
       tasks.restartTask(return_to_def_mode);
       break;
@@ -1230,7 +1283,7 @@ void checkButton()
       break;
     // установить флаг изменения данных
     case MODE_SETTING:
-      channels[curChannel].flag = FL_RUN_DATA;
+      (curBtnCount == 2) ? channels[0].flag = FL_RUN_DATA : channels[curChannel].flag = FL_RUN_DATA;
       tasks.restartTask(return_to_def_mode);
       break;
     }
@@ -1257,6 +1310,48 @@ void checkButton()
 
 // ===================================================
 
+void verifyEEPROM()
+{
+  // если при включении питания зажата кнопка, сбросить к настройкам по умолчанию
+  bool to_reset = !digitalRead(BTN_PIN);
+
+  if (to_reset)
+  { // настройки использования датчика света и пищалки при ошибках
+    eeprom_update_byte(ss_eemems_0, 1);
+    eeprom_update_byte(ss_eemems_1, 1);
+    // обозначить звуковым сигналом сброс настроек
+    tone(BUZZER_PIN, 2000, 1000);
+  }
+  for (byte i = 0; i < CHANNEL_COUNT; i++)
+  {
+    if (to_reset)
+    { // настройки использования каналов и датчиков влажности
+      eeprom_update_byte(hs_eemems[i], 1);
+      eeprom_update_byte(c_eemems[i], 1);
+    }
+    if (to_reset || (eeprom_read_word(h_eemems[i]) > 700) || (eeprom_read_word(h_eemems[i]) < 400))
+    { // настройки уровней влажности
+      eeprom_update_word(h_eemems[i], DEFAULT_HUMIDITY_THRESHOLD);
+    }
+    if (to_reset || (eeprom_read_dword(p_eemems[i]) > MAX_PUMP_TIMER) || (eeprom_read_dword(p_eemems[i]) <= 1000))
+    { // настройки помп
+      eeprom_update_dword(p_eemems[i], DEFAULT_PUMP_TIMER);
+    }
+    if (to_reset || (eeprom_read_byte(d_eemems[i]) > 14) || (eeprom_read_byte(d_eemems[i]) == 0))
+    { // настройки минимального количества дней
+      eeprom_update_byte(d_eemems[i], MIN_DAY_COUNT_DEF);
+    }
+    if (to_reset || (eeprom_read_byte(md_eemems[i]) > 28) || (eeprom_read_byte(md_eemems[i]) == 0))
+    { // настройки максимального количества дней
+      eeprom_update_byte(md_eemems[i], MAX_DAY_COUNT_DEF);
+    }
+    if (to_reset || (eeprom_read_byte(mm_eemems[i]) > 112))
+    { // сохраненное количество пройденных шестичасовых циклов
+      eeprom_update_byte(mm_eemems[i], 0);
+    }
+  }
+}
+
 void setup()
 {
 #ifdef LOG_ON
@@ -1274,12 +1369,26 @@ void setup()
   // ==== настройка пинов ============================
   pinMode(WATER_LEVEL_SENSOR_PIN, INPUT_PULLUP);
   pinMode(BUZZER_PIN, OUTPUT);
+#if (CHANNEL_COUNT > 0)
   pinMode(HPOWER_1_SENSOR_PIN, OUTPUT);
   pinMode(PUMP_1_PIN, OUTPUT);
+#endif
+#if (CHANNEL_COUNT > 1)
   pinMode(HPOWER_2_SENSOR_PIN, OUTPUT);
   pinMode(PUMP_2_PIN, OUTPUT);
+#endif
+#if (CHANNEL_COUNT > 2)
   pinMode(HPOWER_3_SENSOR_PIN, OUTPUT);
   pinMode(PUMP_3_PIN, OUTPUT);
+#endif
+#if (CHANNEL_COUNT > 3)
+  pinMode(HPOWER_4_SENSOR_PIN, OUTPUT);
+  pinMode(PUMP_4_PIN, OUTPUT);
+#endif
+#if (CHANNEL_COUNT == 5)
+  pinMode(HPOWER_5_SENSOR_PIN, OUTPUT);
+  pinMode(PUMP_5_PIN, OUTPUT);
+#endif
 
   // ==== настройка задач ============================
   main_timer = tasks.addTask(21600000, mainTimer);                   // главный таймер - интервал 6 часов
@@ -1291,29 +1400,10 @@ void setup()
   run_set_channels = tasks.addTask(100, runSetChannels, false);      // таймер режима настройки
   return_to_def_mode = tasks.addTask(60000, returnToDefMode, false); // таймер автовыхода из настроек
 
-  // ==== верификация настроек по каналам ============
+  // ==== верификация настроек =======================
+  verifyEEPROM();
   for (byte i = 0; i < CHANNEL_COUNT; i++)
   {
-    if ((eeprom_read_word(h_eemems[i]) > 700) || (eeprom_read_word(h_eemems[i]) < 400))
-    {
-      eeprom_update_word(h_eemems[i], DEFAULT_HUMIDITY_THRESHOLD);
-    }
-    if (eeprom_read_dword(p_eemems[i]) > MAX_PUMP_TIMER || eeprom_read_dword(p_eemems[i]) <= 1000)
-    {
-      eeprom_update_dword(p_eemems[i], DEFAULT_PUMP_TIMER);
-    }
-    if ((eeprom_read_byte(d_eemems[i]) > 14) || (eeprom_read_byte(d_eemems[i]) == 0))
-    {
-      eeprom_update_byte(d_eemems[i], MIN_DAY_COUNT_DEF);
-    }
-    if ((eeprom_read_byte(md_eemems[i]) > 28) || (eeprom_read_byte(md_eemems[i]) == 0))
-    {
-      eeprom_update_byte(md_eemems[i], MAX_DAY_COUNT_DEF);
-    }
-    if ((eeprom_read_byte(mm_eemems[i]) > 112))
-    {
-      eeprom_update_byte(mm_eemems[i], 0);
-    }
     channels[i].min_max_count = eeprom_read_byte(mm_eemems[i]);
   }
 }
@@ -1344,7 +1434,10 @@ void checkSerial()
     Serial.println();
     switch (inByte)
     {
-    case 49: // '1' - вывод состояния таймеров, датчиков и каналов
+    case 49: // '1' - вывод информации о системе
+      Serial.print("Firmware version: ");
+      Serial.println(FIRMWARE_VERSION);
+      Serial.println();
       // состояние таймеров
       Serial.println("=== Timers state ===");
       Serial.println();
@@ -1370,7 +1463,7 @@ void checkSerial()
       Serial.println();
       // показания датчика света
       Serial.print("Light sensor ");
-      if (!eeprom_read_byte(ss_eemems[0]))
+      if (!eeprom_read_byte(ss_eemems_0))
       {
         Serial.println(" not used");
       }
@@ -1385,7 +1478,7 @@ void checkSerial()
       digitalRead(WATER_LEVEL_SENSOR_PIN) ? Serial.println("yes") : Serial.println("no");
       // использование пищалки в сообщениях об ошибках
       Serial.print("Error buzzer ");
-      if (!eeprom_read_byte(ss_eemems[2]))
+      if (!eeprom_read_byte(ss_eemems_1))
       {
         Serial.println(" not used");
       }
@@ -1396,6 +1489,9 @@ void checkSerial()
       Serial.println();
 
       Serial.println("=== Channels state ===");
+      Serial.println();
+      Serial.print("Total channel count: ");
+      Serial.println(CHANNEL_COUNT);
       Serial.println();
       for (byte i = 0; i < CHANNEL_COUNT; i++)
       {
@@ -1474,8 +1570,10 @@ void printChannelStatus(byte cnl)
     }
     Serial.print("Pump state: "); // текущий статус помпы
     digitalRead(channels[cnl].pump_pin) ? Serial.println("power ON") : Serial.println("power OFF");
-    Serial.print("Pump timeout, msec: "); // время работы помпы для канала
-    Serial.println(eeprom_read_dword(p_eemems[cnl]));
+    Serial.print("Pump timeout, sec: "); // время работы помпы для канала
+    Serial.print(eeprom_read_dword(p_eemems[cnl]) / 1000);
+    Serial.print('.');
+    Serial.println(eeprom_read_dword(p_eemems[cnl]) % 1000);
     Serial.print("Humidity sensor:"); // текущий статус датчика влажности
     if (!eeprom_read_byte(hs_eemems[cnl]))
     {

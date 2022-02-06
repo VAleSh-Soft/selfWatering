@@ -6,7 +6,7 @@
 #include "selfWatering.h"
 
 // ==== настройки ====================================
-#define FIRMWARE_VERSION "3.7.0"       // версия прошивки
+#define FIRMWARE_VERSION "3.7.1"       // версия прошивки
 #define MAX_DAY_COUNT_DEF 14           // максимальное количество суток, по истечении которого полив будет включен безусловно, значение по умолчанию
 #define MIN_DAY_COUNT_DEF 7            // минимальное количество суток, до истечения которого полив не будет включен, значение по умолчанию
 #define METERING_COUNT 8               // количество замеров влажности для усреднения результата; желательно задавать значение, равное степени числа 2 (2, 4, 8, 16 и т.д.)
@@ -272,22 +272,28 @@ void runChanel()
             setWateringMode(curChannel);
           }
           // или если прошло максимальное количество дней, включить полив без замера влажности
-          else if (channels[curChannel].min_max_count >= eeprom_read_byte(md_eemems[curChannel]) * 4)
-          {
-            setWateringMode(curChannel);
-            // и уменьшить порог срабатывания на ступень
-            word t = eeprom_read_word(h_eemems[curChannel]);
-            if (t > 400)
-            {
-              t -= 100;
-            }
-            eeprom_update_word(h_eemems[curChannel], t);
-          }
           else
-          { // иначе включить режим измерения влажности
-            channels[curChannel].metering_flag = SNS_METERING;
-            digitalWrite(channels[curChannel].p_sensor_pin, HIGH);
-            channels[curChannel].m_count = 0;
+          {
+            byte x = eeprom_read_byte(md_eemems[curChannel]) * 4;
+            if (channels[curChannel].min_max_count >= x)
+            {
+              setWateringMode(curChannel);
+              if (x > eeprom_read_byte(d_eemems[curChannel]) * 4)
+              { // и уменьшить порог срабатывания на ступень при условии, что максимальное количество дней задано больше минимального, т.е. запуск реально по таймауту, а порог так не был достигнут
+                word t = eeprom_read_word(h_eemems[curChannel]);
+                if (t > 400)
+                {
+                  t -= 100;
+                }
+                eeprom_update_word(h_eemems[curChannel], t);
+              }
+            }
+            else
+            { // иначе включить режим измерения влажности
+              channels[curChannel].metering_flag = SNS_METERING;
+              digitalWrite(channels[curChannel].p_sensor_pin, HIGH);
+              channels[curChannel].m_count = 0;
+            }
           }
         }
       }
@@ -366,7 +372,8 @@ void cnlMetering(byte channel)
         case CNL_RESCAN:
           uint16_t t = eeprom_read_word(h_eemems[channel]);
           // полив считать совершившимся, если датчик влажности выдает на 200 ниже порогового значения (ниже 100 для порога 400)
-          if (p > (t >= 500) ? t - 200 : t - 100)
+          t -= (t >= 500) ? 200 : 100;
+          if (p > t)
           {
             if (channels[channel].channel_state == CNL_RESCAN)
             {

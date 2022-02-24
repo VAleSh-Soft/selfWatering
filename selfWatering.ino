@@ -6,7 +6,7 @@
 #include "selfWatering.h"
 
 // ==== настройки ====================================
-#define FIRMWARE_VERSION "3.7.1"       // версия прошивки
+#define FIRMWARE_VERSION "3.7.2"       // версия прошивки
 #define MAX_DAY_COUNT_DEF 14           // максимальное количество суток, по истечении которого полив будет включен безусловно, значение по умолчанию
 #define MIN_DAY_COUNT_DEF 7            // минимальное количество суток, до истечения которого полив не будет включен, значение по умолчанию
 #define METERING_COUNT 8               // количество замеров влажности для усреднения результата; желательно задавать значение, равное степени числа 2 (2, 4, 8, 16 и т.д.)
@@ -30,18 +30,8 @@ shHandle return_to_def_mode; // таймер возврата в основно�
 
 byte curChannel = 0;         // текущий канал полива
 byte curMode = MODE_DEFAULT; // текущий режим работы
-byte curBtnCount = 0;        // счетчик одиночных кликов кнопки, нужен для входа в режим настроек
-/*
-3 клика – настройка времени работы помпы
-4 клика – настройка порога влажности (четыре уровня, 400 – 500 – 600 – 700)
-5 кликов – настройка минимального интервала (дней)
-6 кликов – настройка максимального интервала (дней)
-7 кликов – включение/отключение датчика влажности для канала
-8 кликов – включение/отключение канала целиком
-2 коротких + 1 длинный - включение/отключение датчика света и пищалки об ошибках
-*/
 
-shButton btn(BTN_PIN);
+swButton btn(BTN_PIN);
 
 // массив каналов полива
 ChannelState channels[] = {
@@ -671,7 +661,7 @@ void setLeds_4(byte i, bool reset = false)
     }
     else
     {
-      switch (curBtnCount)
+      switch (btn.getClickBtnCount())
       {
       case 4:
         leds[i + 1] = CRGB::Blue;
@@ -707,7 +697,7 @@ void setLeds_7(byte i)
 
     if (channels[i].m_count)
     {
-      leds[i + 1] = (curBtnCount == 8) ? CRGB::Green : CRGB::Blue;
+      leds[i + 1] = (btn.getClickBtnCount() == 8) ? CRGB::Green : CRGB::Blue;
     }
     else
     {
@@ -722,7 +712,7 @@ void setLeds_7(byte i)
       }
       else
       {
-        leds[i + 1] = (curBtnCount == 8) ? CRGB::Green : CRGB::Blue;
+        leds[i + 1] = (btn.getClickBtnCount() == 8) ? CRGB::Green : CRGB::Blue;
       }
     }
     if (++n > 9)
@@ -732,7 +722,7 @@ void setLeds_7(byte i)
   }
   else
   {
-    switch (curBtnCount)
+    switch (btn.getClickBtnCount())
     {
     case 7:
       leds[i + 1] = (eeprom_read_byte(hs_eemems[i])) ? CRGB::Blue : CRGB::Red;
@@ -768,7 +758,7 @@ void setLeds()
   // индикаторы каналов
 #if (CHANNEL_COUNT <= 2)
   byte z = CHANNEL_COUNT;
-  if (curBtnCount == 2)
+  if (btn.getClickBtnCount() == 2)
   {
     z = (CHANNEL_COUNT < 2) ? 2 : 3;
   }
@@ -783,7 +773,7 @@ void setLeds()
       setLedsDefault(i);
       break;
     case MODE_SETTING:
-      switch (curBtnCount)
+      switch (btn.getClickBtnCount())
       {
       case 2:
         setLeds_2(i);
@@ -892,12 +882,12 @@ void runSetBuzzer()
   }
   else
   { // если только что включен режим настройки, то дать серию коротких пиков в зависимости от режима
-    if ((curBtnCount >= 2) && (curBtnCount <= 8))
+    if ((btn.getClickBtnCount() >= 2) && (btn.getClickBtnCount() <= 8))
     {
       tone(BUZZER_PIN, pgm_read_dword(&pick[0][n]), pgm_read_dword(&pick[1][n]));
       tasks.setTaskInterval(set_buzzer_on, pgm_read_dword(&pick[1][n]), true);
 
-      if (++n >= curBtnCount * 2)
+      if (++n >= btn.getClickBtnCount() * 2)
       {
         n = 0;
         tasks.stopTask(set_buzzer_on);
@@ -959,7 +949,7 @@ void isBtnClosed_4()
 {
   static uint32_t _timer = 0;
   byte max_data;
-  switch (curBtnCount)
+  switch (btn.getClickBtnCount())
   {
   case 4:
     max_data = 4;
@@ -994,7 +984,7 @@ void isBtnClosed_4()
 void getCurrentData()
 {
   // поле m_count используется только при измерении влажности, поэтому его можно с чистой совестью использовать в процессе настроек
-  switch (curBtnCount)
+  switch (btn.getClickBtnCount())
   {
   case 2:
     channels[0].m_count = 0;
@@ -1025,7 +1015,7 @@ void runSetChannels()
   uint32_t tmr = millis();
   byte max_channel = CHANNEL_COUNT;
 #if (CHANNEL_COUNT <= 2)
-  if (curBtnCount == 2)
+  if (btn.getClickBtnCount() == 2)
   {
     max_channel = (CHANNEL_COUNT < 2) ? 2 : 3;
   }
@@ -1047,18 +1037,18 @@ void runSetChannels()
     return;
   }
   // проверка настройки помпы
-  if ((curBtnCount == 3) && (channels[curChannel].flag == FL_CHECK_DATA))
+  if ((btn.getClickBtnCount() == 3) && (channels[curChannel].flag == FL_CHECK_DATA))
   {
     isBtnClosed_3(tmr, result);
   }
 
   // управление данными
-  if (((curBtnCount == 2) && (channels[0].flag == FL_RUN_DATA)) || (channels[curChannel].flag == FL_RUN_DATA))
+  if (((btn.getClickBtnCount() == 2) && (channels[0].flag == FL_RUN_DATA)) || (channels[curChannel].flag == FL_RUN_DATA))
   {
     if (btn.isButtonClosed())
     {
       tasks.restartTask(return_to_def_mode);
-      switch (curBtnCount)
+      switch (btn.getClickBtnCount())
       {
       case 2:
         tone(BUZZER_PIN, 2500, 100);
@@ -1085,9 +1075,9 @@ void runSetChannels()
     }
     else
     {
-      byte y = (curBtnCount == 2) ? 0 : curChannel;
+      byte y = (btn.getClickBtnCount() == 2) ? 0 : curChannel;
       channels[y].flag = FL_STOP_DATA;
-      switch (curBtnCount)
+      switch (btn.getClickBtnCount())
       {
       case 3:
         digitalWrite(channels[curChannel].pump_pin, LOW);
@@ -1101,12 +1091,12 @@ void runSetChannels()
     }
   }
   // управление сохранением изменений, переходом на другой канал или выходом из настроек
-  byte k = (curBtnCount == 2) ? 0 : curChannel;
+  byte k = (btn.getClickBtnCount() == 2) ? 0 : curChannel;
   if ((channels[k].flag == FL_SAVE_DATA) || (channels[k].flag == FL_NEXT) || (channels[k].flag == FL_EXIT))
   {
     if (channels[k].flag == FL_SAVE_DATA)
     {
-      switch (curBtnCount)
+      switch (btn.getClickBtnCount())
       {
       case 2:
         if (curChannel == 0)
@@ -1145,14 +1135,14 @@ void runSetChannels()
     else
     {
       curChannel++;
-      if ((curBtnCount == 2) && (curChannel == 1))
+      if ((btn.getClickBtnCount() == 2) && (curChannel == 1))
       {
         curChannel = max_channel - 1; // перескочить с первого канала сразу на последний
       }
     }
     if (curChannel < max_channel)
     {
-      byte y = (curBtnCount == 2) ? 0 : curChannel;
+      byte y = (btn.getClickBtnCount() == 2) ? 0 : curChannel;
       channels[y].m_count = 0;
       channels[y].flag = FL_NONE;
       getCurrentData();
@@ -1171,7 +1161,7 @@ void runSetChannels()
     // и при следующем входе в настройки 4-6 первый цикл моргания может не
     // соответствовать реальным настройкам, поэтому принудительно обнуляем
     // счетчики
-    switch (curBtnCount)
+    switch (btn.getClickBtnCount())
     {
     case 4:
     case 5:
@@ -1179,7 +1169,7 @@ void runSetChannels()
       setLeds_4(0, true);
       break;
     }
-    curBtnCount = 0;
+    btn.setClickBtnCount(0);
     runSetBuzzer();
   }
 }
@@ -1239,7 +1229,7 @@ void checkButton()
     case MODE_SETTING:
       if (!tasks.getTaskState(set_buzzer_on))
       {
-        byte z = (curBtnCount == 2) ? 0 : curChannel;
+        byte z = (btn.getClickBtnCount() == 2) ? 0 : curChannel;
         channels[z].flag = (channels[z].flag == FL_STOP_DATA) ? FL_SAVE_DATA : FL_NEXT;
       }
       tasks.restartTask(return_to_def_mode);
@@ -1260,7 +1250,7 @@ void checkButton()
       break;
     // в режиме настройки просто перезапустить таймер автовыхода; в случае настройки помпы поднять флаг тестового запуска помпы
     case MODE_SETTING:
-      if ((curBtnCount == 3) && (channels[curChannel].flag != FL_RUN_DATA))
+      if ((btn.getClickBtnCount() == 3) && (channels[curChannel].flag != FL_RUN_DATA))
       {
         channels[curChannel].flag = FL_CHECK_DATA;
       }
@@ -1290,25 +1280,25 @@ void checkButton()
       break;
     // установить флаг изменения данных
     case MODE_SETTING:
-      (curBtnCount == 2) ? channels[0].flag = FL_RUN_DATA : channels[curChannel].flag = FL_RUN_DATA;
+      (btn.getClickBtnCount() == 2) ? channels[0].flag = FL_RUN_DATA : channels[curChannel].flag = FL_RUN_DATA;
       tasks.restartTask(return_to_def_mode);
       break;
     }
     break;
   }
   // проверить, сколько одиночных кликов кнопки сделано
-  if ((curBtnCount == 0) && !tasks.getTaskState(run_channel))
+  if ((btn.getClickBtnCount() == 0) && !tasks.getTaskState(run_channel))
   {
     if (n == 200)
     {
-      curBtnCount = 2;
+      btn.setClickBtnCount(2);
       n = 0;
     }
     else if (millis() - btn_timer > 1000)
     {
       if (((n >= 3) && (n <= 8)))
       {
-        curBtnCount = n;
+        btn.setClickBtnCount(n);
       }
       n = 0;
     }
@@ -1368,11 +1358,6 @@ void setup()
   FastLED.addLeds<WS2812B, LEDS_PIN, GRB>(leds, CHANNEL_COUNT + 1);
   FastLED.setBrightness(5);
 
-  // ==== настройка кнопки ===========================
-  btn.setLongClickMode(LCM_ONLYONCE);
-  btn.setVirtualClickOn(true);
-  btn.setTimeout(1000);
-
   // ==== настройка пинов ============================
   pinMode(WATER_LEVEL_SENSOR_PIN, INPUT_PULLUP);
   pinMode(BUZZER_PIN, OUTPUT);
@@ -1419,7 +1404,7 @@ void loop()
 {
   tasks.tick();
   checkButton();
-  if ((curBtnCount >= 2) && (curBtnCount <= 8) && !tasks.getTaskState(run_set_channels))
+  if ((btn.getClickBtnCount() >= 2) && (btn.getClickBtnCount() <= 8) && !tasks.getTaskState(run_set_channels))
   {
     runSetChannels();
   }
@@ -1442,62 +1427,62 @@ void checkSerial()
     switch (inByte)
     {
     case 49: // '1' - вывод информации о системе
-      Serial.print("Firmware version: ");
-      Serial.println(FIRMWARE_VERSION);
+      Serial.print(F("Firmware version: "));
+      Serial.println(F(FIRMWARE_VERSION));
       Serial.println();
       // состояние таймеров
-      Serial.println("=== Timers state ===");
+      Serial.println(F("=== Timers state ==="));
       Serial.println();
-      Serial.print("main_timer: ");
+      Serial.print(F("main_timer: "));
       Serial.println(tasks.getTaskState(main_timer));
-      Serial.print("run_channel: ");
+      Serial.print(F("run_channel: "));
       Serial.println(tasks.getTaskState(run_channel));
-      Serial.print("leds_guard: ");
+      Serial.print(F("leds_guard: "));
       Serial.println(tasks.getTaskState(leds_guard));
-      Serial.print("error_buzzer_on: ");
+      Serial.print(F("error_buzzer_on: "));
       Serial.println(tasks.getTaskState(error_buzzer_on));
-      Serial.print("rescan_start: ");
+      Serial.print(F("rescan_start: "));
       Serial.println(tasks.getTaskState(rescan_start));
-      Serial.print("set_buzzer_on: ");
+      Serial.print(F("set_buzzer_on: "));
       Serial.println(tasks.getTaskState(set_buzzer_on));
-      Serial.print("run_set_channels: ");
+      Serial.print(F("run_set_channels: "));
       Serial.println(tasks.getTaskState(run_set_channels));
-      Serial.print("return_to_def_mode: ");
+      Serial.print(F("return_to_def_mode: "));
       Serial.println(tasks.getTaskState(return_to_def_mode));
       Serial.println();
 
-      Serial.println("=== Sensors state ===");
+      Serial.println(F("=== Sensors state ==="));
       Serial.println();
       // показания датчика света
-      Serial.print("Light sensor ");
+      Serial.print(F("Light sensor "));
       if (!eeprom_read_byte(ss_eemems_0))
       {
-        Serial.println(" not used");
+        Serial.println(F(" not used"));
       }
       else
       {
-        Serial.println(" used");
-        Serial.print("Light sensor data: ");
+        Serial.println(F(" used"));
+        Serial.print(F("Light sensor data: "));
         Serial.println(analogRead(LIGHT_SENSOR_PIN));
       }
       // наличие воды по датчику уровня
-      Serial.print("Water sensor data: ");
-      digitalRead(WATER_LEVEL_SENSOR_PIN) ? Serial.println("yes") : Serial.println("no");
+      Serial.print(F("Water sensor data: "));
+      digitalRead(WATER_LEVEL_SENSOR_PIN) ? Serial.println(F("yes")) : Serial.println(F("no"));
       // использование пищалки в сообщениях об ошибках
-      Serial.print("Error buzzer ");
+      Serial.print(F("Error buzzer "));
       if (!eeprom_read_byte(ss_eemems_1))
       {
-        Serial.println(" not used");
+        Serial.println(F(" not used"));
       }
       else
       {
-        Serial.println(" used");
+        Serial.println(F(" used"));
       }
       Serial.println();
 
-      Serial.println("=== Channels state ===");
+      Serial.println(F("=== Channels state ==="));
       Serial.println();
-      Serial.print("Total channel count: ");
+      Serial.print(F("Total channel count: "));
       Serial.println(CHANNEL_COUNT);
       Serial.println();
       for (byte i = 0; i < CHANNEL_COUNT; i++)
@@ -1514,12 +1499,12 @@ void checkSerial()
         }
         else
         {
-          Serial.println("Denied, watering or metering is in progress");
+          Serial.println(F("Denied, watering or metering is in progress"));
         }
       }
       else
       {
-        Serial.println("Denied, system in settings mode");
+        Serial.println(F("Denied, system in settings mode"));
       }
 
       Serial.println();
@@ -1536,97 +1521,97 @@ void checkSerial()
 
 void printLastMeteringData(byte cnl)
 {
-  Serial.print("Metering data, channel ");
+  Serial.print(F("Metering data, channel "));
   Serial.print(cnl + 1);
-  Serial.print(": ");
+  Serial.print(F(": "));
   Serial.println(channels[cnl].m_data);
 }
 
 void printChannelStatus(byte cnl)
 {
-  Serial.print("Channel "); // текущий статус канала
+  Serial.print(F("Channel ")); // текущий статус канала
   Serial.print(cnl + 1);
   if (!eeprom_read_byte(c_eemems[cnl]))
   {
-    Serial.println(" not used");
+    Serial.println(F(" not used"));
   }
   else
   {
-    Serial.println(" used");
-    Serial.print("Channel state: ");
+    Serial.println(F(" used"));
+    Serial.print(F("Channel state: "));
     switch (channels[cnl].channel_state)
     {
     case CNL_DONE:
-      Serial.println("CNL_DONE");
+      Serial.println(F("CNL_DONE"));
       break;
     case CNL_WORK:
-      Serial.println("CNL_WORK");
+      Serial.println(F("CNL_WORK"));
       break;
     case CNL_CHECK:
-      Serial.println("CNL_CHECK");
+      Serial.println(F("CNL_CHECK"));
       break;
     case CNL_RESCAN:
-      Serial.println("CNL_RESCAN");
+      Serial.println(F("CNL_RESCAN"));
       break;
     case CNL_ERROR:
-      Serial.println("CNL_ERROR");
+      Serial.println(F("CNL_ERROR"));
       break;
     default:
-      Serial.println("unknown");
+      Serial.println(F("unknown"));
       break;
     }
-    Serial.print("Pump state: "); // текущий статус помпы
-    digitalRead(channels[cnl].pump_pin) ? Serial.println("power ON") : Serial.println("power OFF");
-    Serial.print("Pump timeout, sec: "); // время работы помпы для канала
+    Serial.print(F("Pump state: ")); // текущий статус помпы
+    digitalRead(channels[cnl].pump_pin) ? Serial.println(F("power ON")) : Serial.println(F("power OFF"));
+    Serial.print(F("Pump timeout, sec: ")); // время работы помпы для канала
     Serial.print(eeprom_read_dword(p_eemems[cnl]) / 1000);
-    Serial.print('.');
+    Serial.print(F("."));
     Serial.println(eeprom_read_dword(p_eemems[cnl]) % 1000);
-    Serial.print("Humidity sensor:"); // текущий статус датчика влажности
+    Serial.print(F("Humidity sensor:")); // текущий статус датчика влажности
     if (!eeprom_read_byte(hs_eemems[cnl]))
     {
-      Serial.println(" not used");
+      Serial.println(F(" not used"));
     }
     else
     {
-      Serial.println(" used");
-      Serial.print("Sensor state: "); // текущий статус датчика влажности
-      digitalRead(channels[cnl].p_sensor_pin) ? Serial.println("power ON") : Serial.println("power OFF");
-      Serial.print("Metering flag: ");
+      Serial.println(F(" used"));
+      Serial.print(F("Sensor state: ")); // текущий статус датчика влажности
+      digitalRead(channels[cnl].p_sensor_pin) ? Serial.println(F("power ON")) : Serial.println(F("power OFF"));
+      Serial.print(F("Metering flag: "));
       switch (channels[cnl].metering_flag)
       {
       case SNS_NONE:
-        Serial.println("SNS_NONE");
+        Serial.println(F("SNS_NONE"));
         break;
       case SNS_METERING:
-        Serial.println("SNS_METERING");
+        Serial.println(F("SNS_METERING"));
         break;
       case SNS_TESTING:
-        Serial.println("SNS_TESTING");
+        Serial.println(F("SNS_TESTING"));
         break;
       case SNS_WATERING:
-        Serial.println("SNS_WATERING");
+        Serial.println(F("SNS_WATERING"));
         break;
       default:
-        Serial.println("unknown");
+        Serial.println(F("unknown"));
         break;
       }
-      Serial.print("Humidity threshold: "); // порог влажности для канала
+      Serial.print(F("Humidity threshold: ")); // порог влажности для канала
       Serial.println(eeprom_read_word(h_eemems[cnl]));
-      Serial.print("Humidity last data: "); // последний замер влажности для канала
+      Serial.print(F("Humidity last data: ")); // последний замер влажности для канала
       Serial.println(channels[cnl].m_data);
     }
-    Serial.print("Set interval of days: "); // настройки минимального и максимального количества дней
+    Serial.print(F("Set interval of days: ")); // настройки минимального и максимального количества дней
     Serial.print(eeprom_read_byte(d_eemems[cnl]));
-    Serial.print(" - "); // настройки минимального и максимального количества дней
+    Serial.print(F(" - ")); // настройки минимального и максимального количества дней
     Serial.println(eeprom_read_byte(md_eemems[cnl]));
-    Serial.print("Six-hour cycles passed: "); // количество прошедших шестичасовых циклов
+    Serial.print(F("Six-hour cycles passed: ")); // количество прошедших шестичасовых циклов
     Serial.println(channels[cnl].min_max_count);
-    Serial.print("Next point in "); // осталось времени до следующего цикла, час/мин
+    Serial.print(F("Next point in ")); // осталось времени до следующего цикла, час/мин
     uint32_t x = tasks.getNextTaskPoint(main_timer);
     Serial.print(x / 3600000);
-    Serial.print(" hour, ");
+    Serial.print(F(" hour, "));
     Serial.print(x % 3600000 / 60000);
-    Serial.println(" min");
+    Serial.println(F(" min"));
   }
   Serial.println();
 }

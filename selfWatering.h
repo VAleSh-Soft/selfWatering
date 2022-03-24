@@ -107,7 +107,7 @@ public:
 #define FL_CHECK_DATA 6 // флаг проверки сохраненного значения; используется для проверки настройки помпы
 
 // структура с данными канала
-struct ChannelState
+struct ChannelData
 {
   byte pump_pin;      // пин, на который подключена помпа
   byte p_sensor_pin;  // пин подключения питания датчика

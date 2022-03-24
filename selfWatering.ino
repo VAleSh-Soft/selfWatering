@@ -6,7 +6,7 @@
 #include "selfWatering.h"
 
 // ==== настройки ====================================
-#define FIRMWARE_VERSION "3.7.2"       // версия прошивки
+#define FIRMWARE_VERSION "3.7.3"       // версия прошивки
 #define MAX_DAY_COUNT_DEF 14           // максимальное количество суток, по истечении которого полив будет включен безусловно, значение по умолчанию
 #define MIN_DAY_COUNT_DEF 7            // минимальное количество суток, до истечения которого полив не будет включен, значение по умолчанию
 #define METERING_COUNT 8               // количество замеров влажности для усреднения результата; желательно задавать значение, равное степени числа 2 (2, 4, 8, 16 и т.д.)
@@ -34,25 +34,25 @@ byte curMode = MODE_DEFAULT; // текущий режим работы
 swButton btn(BTN_PIN);
 
 // массив каналов полива
-ChannelState channels[] = {
+ChannelData channels[] = {
 #if (CHANNEL_COUNT > 0)
-    (ChannelState){PUMP_1_PIN, HPOWER_1_SENSOR_PIN, HUMIDITY_1_SENSOR_PIN, CNL_DONE, SNS_TESTING, 0, 0, 0, 0, 0}
+    (ChannelData){PUMP_1_PIN, HPOWER_1_SENSOR_PIN, HUMIDITY_1_SENSOR_PIN, CNL_DONE, SNS_TESTING, 0, 0, 0, 0, 0}
 #endif
 #if (CHANNEL_COUNT > 1)
     ,
-    (ChannelState){PUMP_2_PIN, HPOWER_2_SENSOR_PIN, HUMIDITY_2_SENSOR_PIN, CNL_DONE, SNS_TESTING, 0, 0, 0, 0, 0}
+    (ChannelData){PUMP_2_PIN, HPOWER_2_SENSOR_PIN, HUMIDITY_2_SENSOR_PIN, CNL_DONE, SNS_TESTING, 0, 0, 0, 0, 0}
 #endif
 #if (CHANNEL_COUNT > 2)
     ,
-    (ChannelState){PUMP_3_PIN, HPOWER_3_SENSOR_PIN, HUMIDITY_3_SENSOR_PIN, CNL_DONE, SNS_TESTING, 0, 0, 0, 0, 0}
+    (ChannelData){PUMP_3_PIN, HPOWER_3_SENSOR_PIN, HUMIDITY_3_SENSOR_PIN, CNL_DONE, SNS_TESTING, 0, 0, 0, 0, 0}
 #endif
 #if (CHANNEL_COUNT > 3)
     ,
-    (ChannelState){PUMP_4_PIN, HPOWER_4_SENSOR_PIN, HUMIDITY_4_SENSOR_PIN, CNL_DONE, SNS_TESTING, 0, 0, 0, 0, 0}
+    (ChannelData){PUMP_4_PIN, HPOWER_4_SENSOR_PIN, HUMIDITY_4_SENSOR_PIN, CNL_DONE, SNS_TESTING, 0, 0, 0, 0, 0}
 #endif
 #if (CHANNEL_COUNT == 5)
     ,
-    (ChannelState){PUMP_5_PIN, HPOWER_5_SENSOR_PIN, HUMIDITY_5_SENSOR_PIN, CNL_DONE, SNS_TESTING, 0, 0, 0, 0, 0}
+    (ChannelData){PUMP_5_PIN, HPOWER_5_SENSOR_PIN, HUMIDITY_5_SENSOR_PIN, CNL_DONE, SNS_TESTING, 0, 0, 0, 0, 0}
 #endif
 };
 
@@ -175,7 +175,7 @@ uint16_t c_eemems[] = {
 #endif
 };
 
-// массив адресов ячеек памяти для сохранения уровней влажности по каналам (uint16_t)
+// массив адресов ячеек памяти для сохранения порога уровня влажности по каналам (uint16_t)
 uint16_t h_eemems[] = {
 #if (CHANNEL_COUNT > 0)
     120
@@ -198,7 +198,7 @@ uint16_t h_eemems[] = {
 #endif
 };
 
-// массив адресов ячеек памяти для сохранения настроек помпы по каналам (uint16_t)
+// массив адресов ячеек памяти для сохранения настроек помпы по каналам (uint32_t)
 uint16_t p_eemems[] = {
 #if (CHANNEL_COUNT > 0)
     100
@@ -229,7 +229,8 @@ CRGB leds[CHANNEL_COUNT + 1];
 void setWateringMode(byte channel)
 {
   channels[channel].metering_flag = SNS_WATERING;
-  channels[channel].p_timer = millis() + 100; // +100 мс, т.к. полив начнется со следующей итерации таймера run_channel
+  // время будет отсчитываться по циклам, 10 раз в секунду
+  channels[channel].p_timer = eeprom_read_dword(p_eemems[channel]) / 100;
 }
 
 void runChanel()
@@ -264,11 +265,10 @@ void runChanel()
           // или если прошло максимальное количество дней, включить полив без замера влажности
           else
           {
-            byte x = eeprom_read_byte(md_eemems[curChannel]) * 4;
-            if (channels[curChannel].min_max_count >= x)
+            if (channels[curChannel].min_max_count >= eeprom_read_byte(md_eemems[curChannel]) * 4)
             {
               setWateringMode(curChannel);
-              if (x > eeprom_read_byte(d_eemems[curChannel]) * 4)
+              if (eeprom_read_byte(md_eemems[curChannel]) > eeprom_read_byte(d_eemems[curChannel]))
               { // и уменьшить порог срабатывания на ступень при условии, что максимальное количество дней задано больше минимального, т.е. запуск реально по таймауту, а порог так не был достигнут
                 word t = eeprom_read_word(h_eemems[curChannel]);
                 if (t > 400)
@@ -402,10 +402,9 @@ void cnlWatering(byte channel)
 {
   if (digitalRead(WATER_LEVEL_SENSOR_PIN))
   { // если вода есть, включить помпу и поливать, пока не истечет заданное время
-    digitalWrite(channels[channel].pump_pin, HIGH);
-    if (millis() - channels[channel].p_timer >= eeprom_read_dword(p_eemems[channel]))
-    { // если время истекло, остановить помпу
-      digitalWrite(channels[channel].pump_pin, LOW);
+    digitalWrite(channels[channel].pump_pin, channels[channel].p_timer > 0);
+    if (channels[channel].p_timer == 0)
+    { // если время истекло
       // режим измерения включить только если датчик влажности для этого канала используется
       if (eeprom_read_byte(hs_eemems[curChannel]))
       {
@@ -413,7 +412,13 @@ void cnlWatering(byte channel)
         channels[channel].channel_state = CNL_CHECK;
       }
       else
+      {
         channels[channel].metering_flag = SNS_NONE;
+      }
+    }
+    else
+    {
+      channels[channel].p_timer--;
     }
   }
   else
@@ -447,7 +452,13 @@ void manualStart(byte flag, bool run)
     {
       channels[i].channel_state = CNL_DONE;
     }
-    channels[i].metering_flag = flag;
+    // if (flag == SNS_WATERING)
+    // {
+    //   setWateringMode(i);
+    // }
+    // else
+      channels[i].metering_flag = flag;
+
     if (!run)
     { // на случай если в момент остановки идет полив
       tasks.stopTask(run_channel);

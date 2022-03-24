@@ -2,5 +2,5 @@
 _build/*
 *.~vsd
 *.vsd
-~*
-*.doc
+docs/~*
+docs/*.doc

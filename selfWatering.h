@@ -63,7 +63,7 @@ public:
   {
     shButton::setLongClickMode(LCM_ONLYONCE);
     shButton::setVirtualClickOn(true);
-    shButton::setTimeout(1000);
+    shButton::setTimeoutOfLongClick(1000);
   }
 
   void setClickBtnCount(byte _count)

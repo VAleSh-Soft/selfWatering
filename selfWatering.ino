@@ -489,7 +489,7 @@ void setLedsDefault(byte i)
     leds[i + 1] = CRGB::Red;
     break;
   case CNL_RESCAN:
-    leds[i + 1] = digitalRead(channels[i].p_sensor_pin) ? CRGB::Orange : CRGB::Red;
+    leds[i + 1] = digitalRead(channels[i].p_sensor_pin) ? CRGB::Orange : CRGB::DarkCyan;
     break;
   case CNL_WORK:
   case CNL_CHECK:

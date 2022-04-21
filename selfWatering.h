@@ -79,8 +79,10 @@ public:
 
 // ==== режим работы =================================
 
-#define MODE_DEFAULT 0 // основной режим работы
-#define MODE_SETTING 1 // режим настроек каналов
+#define MODE_DEFAULT 0         // основной режим работы
+#define MODE_CUSTOM_RUN 1      // режим выборочного запуска полива
+#define MODE_MANUAL_WATERING 2 // режим ручного полива
+#define MODE_SETTING 3         // режим настроек каналов
 
 // ==== канал датчик/помпа ===========================
 
@@ -151,11 +153,15 @@ void rescanStart();
 void runSetBuzzer();
 void runSetChannels();
 void returnToDefMode();
+void manualWateringRun();
 
 // ==== разное =======================================
 
 // опрос кнопки
 void checkButton();
+void btnOneClick();
+void btnDblClick(byte n);
+void btnLongClick(byte &n);
 
 // ==== отладка ======================================
 // если отладка не нужна, закомментировать строку #define LOG_ON // ведение отладочного лога

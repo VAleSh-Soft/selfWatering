@@ -6,7 +6,7 @@
 #include "selfWatering.h"
 
 // ==== настройки ====================================
-#define FIRMWARE_VERSION "4.0.0"       // версия прошивки
+#define FIRMWARE_VERSION "4.1.0"       // версия прошивки
 #define MAX_DAY_COUNT_DEF 14           // максимальное количество суток, по истечении которого полив будет включен безусловно, значение по умолчанию
 #define MIN_DAY_COUNT_DEF 7            // минимальное количество суток, до истечения которого полив не будет включен, значение по умолчанию
 #define METERING_COUNT 8               // количество замеров влажности для усреднения результата; желательно задавать значение, равное степени числа 2 (2, 4, 8, 16 и т.д.)
@@ -242,7 +242,7 @@ void runChanel()
     tasks.startTask(run_channel);
   }
   // запускать полив только в основном или выборочном режиме, иначе ждать выхода из режима настроек
-  if (curMode != MODE_SETTING)
+  if (curMode == MODE_DEFAULT || curMode == MODE_CUSTOM_RUN)
   { // если канал используется и еще не в рабочем режиме, перевести его в рабочий режим
     if ((channels[curChannel].channel_state == CNL_DONE) && eeprom_read_byte(c_eemems[curChannel]))
     {
@@ -307,6 +307,16 @@ void runChanel()
       case SNS_METERING:
       case SNS_TESTING:
         cnlMetering(curChannel);
+        break;
+      case SNS_RESCAN: // повторную проверку делать только для каналов, которым такое назначено
+        if (channels[curChannel].channel_state == CNL_RESCAN)
+        {
+          cnlMetering(curChannel);
+        }
+        else
+        {
+          channels[curChannel].metering_flag = SNS_NONE;
+        }
         break;
       case SNS_WATERING:
         cnlWatering(curChannel);
@@ -497,6 +507,7 @@ void mainTimer()
 void setLedsDefault(byte i)
 {
   leds[i + 1] = CRGB::Black;
+  static byte n = 0;
   switch (channels[i].channel_state)
   {
   case CNL_ERROR:
@@ -510,7 +521,6 @@ void setLedsDefault(byte i)
     leds[i + 1] = digitalRead(channels[i].pump_pin) ? CRGB::Green : CRGB::Orange;
     break;
   default:
-    static byte n = 0;
     if (curMode != MODE_MANUAL_WATERING)
     {
       n = 0;
@@ -967,7 +977,7 @@ void rescanStart()
 {
   if (!tasks.getTaskState(run_channel))
   {
-    manualStart(SNS_METERING);
+    manualStart(SNS_RESCAN);
     tasks.stopTask(rescan_start);
   }
 }

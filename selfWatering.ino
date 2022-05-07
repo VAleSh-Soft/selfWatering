@@ -1157,6 +1157,7 @@ void manualWateringRun()
   if (!channels[curChannel].getPumpState())
   {
     tasks.stopTask(manual_watering_run);
+    runWateringBuzzer(false);
   }
   else
   {

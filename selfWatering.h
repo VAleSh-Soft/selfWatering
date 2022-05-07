@@ -235,14 +235,14 @@ public:
   // сохранение данных по минимальному количеству дние
   void setMinDay(uint8_t _data) { write_eeprom_8(IO_MIN_DAY, _data); }
   // проверка, прошло ли минимальное количество дней
-  bool checkMinDay() { return (getMinDay() * 4 >= getSixHourCycles()); }
+  bool checkMinDay() { return (getSixHourCycles() >= getMinDay() * 4); }
 
   // получение данных по максимальному количеству дней
   uint8_t getMaxDay() { return (read_eeprom_8(IO_MAX_DAY)); }
   // сохранение данных по максимальному количеству дней
   void setMaxDay(uint8_t _data) { write_eeprom_8(IO_MAX_DAY, _data); }
   // проверка, прошло ли макчимальное количество дней
-  bool checkMaxDay() { return (getMaxDay() * 4 >= getSixHourCycles()); }
+  bool checkMaxDay() { return (getSixHourCycles() >= getMaxDay() * 4); }
 
   // получение количества пройденных шестичасовых циклов
   uint8_t getSixHourCycles() { return (read_eeprom_8(IO_TOTAL_DAY)); }
@@ -359,6 +359,7 @@ void runChanel();
 void setLeds();
 void runErrorBuzzer();
 void runSetBuzzer();
+void runWateringBuzzer(bool toUp = true);
 void rescanStart();
 void runSetChannels();
 void returnToDefMode();

@@ -4,17 +4,18 @@
 #include <shButton.h>
 #include "selfWatering.h"
 
-shTaskManager tasks(9); // создаем список задач
+shTaskManager tasks(10); // создаем список задач
 
-shHandle main_timer;          // главный таймер
-shHandle run_channel;         // режим работы каналов полива
-shHandle leds_guard;          // управление индикаторами
-shHandle error_buzzer_on;     // сигнал ошибки полива
-shHandle set_buzzer_on;       // сигнал в режиме настройки
-shHandle rescan_start;        // перепроверка влажности после полива
-shHandle run_set_channels;    // режим настройки каналов
-shHandle return_to_def_mode;  // таймер возврата в основной режим из любоого другого режима
-shHandle manual_watering_run; // ручной запуск помпы
+shHandle main_timer;            // главный таймер
+shHandle run_channel;           // режим работы каналов полива
+shHandle leds_guard;            // управление индикаторами
+shHandle error_buzzer_on;       // сигнал ошибки полива
+shHandle set_buzzer_on;         // сигнал в режиме настройки
+shHandle watering_buzzer_on;    // сигнал при старте полива
+shHandle rescan_start;          // перепроверка влажности после полива
+shHandle run_set_channels;      // режим настройки каналов
+shHandle return_to_def_mode;    // таймер возврата в основной режим из любого другого режима
+shHandle manual_watering_run;   // ручной запуск помпы
 
 byte curChannel = 0;            // текущий канал полива
 SysMode curMode = MODE_DEFAULT; // текущий режим работы
@@ -55,6 +56,7 @@ CRGB leds[CHANNEL_COUNT + 1];
 
 void setWateringMode(byte channel)
 {
+  runWateringBuzzer();
   channels[channel].setMeteringState(SNS_WATERING);
   // время будет отсчитываться по циклам, 10 раз в секунду
   channels[channel].readPumpTimerData();
@@ -83,9 +85,7 @@ void runChanel()
       if (channels[curChannel].checkMeteringState(SNS_NONE))
       { // продолжить только если прошло минимальное количество суток и, если в настройках разрешено использование датчика света - в светлое время
         if (channels[curChannel].checkMinDay() &&
-            // (!eeprom_read_byte(ss_eemems_0) ||
-            (!EEPROM.read(ss_eemems_0) ||
-             analogRead(LIGHT_SENSOR_PIN) > LIGHT_SENSOR_THRESHOLD))
+            (!EEPROM.read(ss_eemems_0) || analogRead(LIGHT_SENSOR_PIN) > LIGHT_SENSOR_THRESHOLD))
         {
           // если использование датчика влажности для канала отключено
           if (!channels[curChannel].getSensorOnOffState())
@@ -111,7 +111,7 @@ void runChanel()
             else
             { // иначе включить режим измерения влажности
               channels[curChannel].setMeteringState(SNS_METERING);
-              channels[curChannel].setPumpState(true);
+              channels[curChannel].setSensorState(true);
               channels[curChannel].setMeasurementCyclesData(0);
             }
           }
@@ -811,6 +811,44 @@ void runSetBuzzer()
   }
 }
 
+void _wateringBuzzer(byte index)
+{
+  // "мелодия" пищалки: первая строка - частота, вторая строка - длительность
+  static const PROGMEM uint32_t pick[2][5] = {
+      {2000, 0, 2250, 0, 2500},
+      {50, 100, 50, 100, 50}};
+  if (index < 6)
+  {
+    tone(BUZZER_PIN, pgm_read_dword(&pick[0][index]), pgm_read_dword(&pick[1][index]));
+    tasks.setTaskInterval(watering_buzzer_on, pgm_read_dword(&pick[1][index]), true);
+  }
+}
+
+void runWateringBuzzer(bool toUp)
+{
+  static byte n = 0;
+  static bool _toUp = true;
+
+  // если таймер пищалки еще не запущен, запустить его
+  if (!tasks.getTaskState(watering_buzzer_on))
+  {
+    if (!toUp)
+    {
+      _toUp = false;
+    }
+    n = (_toUp) ? 0 : 4;
+    tasks.startTask(watering_buzzer_on);
+  }
+  _wateringBuzzer(n);
+
+  (_toUp) ? n++ : n--;
+  if (n >= 5)
+  {
+    _toUp = true;
+    tasks.stopTask(watering_buzzer_on);
+  }
+}
+
 void rescanStart()
 {
   if (!tasks.getTaskState(run_channel))
@@ -1113,6 +1151,7 @@ void manualWateringRun()
     curMode = MODE_MANUAL_WATERING;
     tasks.startTask(manual_watering_run);
     tasks.startTask(return_to_def_mode);
+    runWateringBuzzer();
   }
   channels[curChannel].setPumpState(btn.isButtonClosed() && digitalRead(WATER_LEVEL_SENSOR_PIN));
   if (!channels[curChannel].getPumpState())
@@ -1213,13 +1252,13 @@ void btnLongClick(byte &n)
   case MODE_MANUAL_WATERING:
     if (tasks.getTaskState(run_channel))
     {
+      runWateringBuzzer(false);
       manualStart(SNS_NONE, false);
     }
     else
     {
       if (n <= 1)
       {
-        tone(BUZZER_PIN, 2500, 100ul);
         switch (curMode)
         {
         case MODE_CUSTOM_RUN:
@@ -1362,6 +1401,7 @@ void setup()
   error_buzzer_on = tasks.addTask(300000, runErrorBuzzer, false);
   rescan_start = tasks.addTask(60000, rescanStart, false);
   set_buzzer_on = tasks.addTask(1000, runSetBuzzer, false);
+  watering_buzzer_on = tasks.addTask(100, runWateringBuzzer, false);
   run_set_channels = tasks.addTask(100, runSetChannels, false);
   return_to_def_mode = tasks.addTask(60000, returnToDefMode, false);
   manual_watering_run = tasks.addTask(100, manualWateringRun, false);

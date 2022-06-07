@@ -6,16 +6,16 @@
 
 shTaskManager tasks(10); // создаем список задач
 
-shHandle main_timer;            // главный таймер
-shHandle run_channel;           // режим работы каналов полива
-shHandle leds_guard;            // управление индикаторами
-shHandle error_buzzer_on;       // сигнал ошибки полива
-shHandle set_buzzer_on;         // сигнал в режиме настройки
-shHandle watering_buzzer_on;    // сигнал при старте полива
-shHandle rescan_start;          // перепроверка влажности после полива
-shHandle run_set_channels;      // режим настройки каналов
-shHandle return_to_def_mode;    // таймер возврата в основной режим из любого другого режима
-shHandle manual_watering_run;   // ручной запуск помпы
+shHandle main_timer;          // главный таймер
+shHandle run_channel;         // режим работы каналов полива
+shHandle leds_guard;          // управление индикаторами
+shHandle error_buzzer_on;     // сигнал ошибки полива
+shHandle set_buzzer_on;       // сигнал в режиме настройки
+shHandle watering_buzzer_on;  // сигнал при старте полива
+shHandle rescan_start;        // перепроверка влажности после полива
+shHandle run_set_channels;    // режим настройки каналов
+shHandle return_to_def_mode;  // таймер возврата в основной режим из любого другого режима
+shHandle manual_watering_run; // ручной запуск помпы
 
 byte curChannel = 0;            // текущий канал полива
 SysMode curMode = MODE_DEFAULT; // текущий режим работы
@@ -157,6 +157,7 @@ void runChanel()
         }
         if (curMode == MODE_CUSTOM_RUN)
         {
+          channels[curChannel].clearSixHourCycles();
           tasks.stopTask(run_channel);
         }
         else
@@ -272,6 +273,7 @@ void cnlWatering(byte channel)
       }
       else
       {
+        channels[channel].clearSixHourCycles();
         channels[channel].setMeteringState(SNS_NONE);
       }
     }
@@ -405,26 +407,26 @@ void setLeds_2(byte i)
         n = 9;
         f = curChannel;
       }
-
       byte h = (i == 0) ? 0 : 1;
-      if (((channels[0].getMeasurementCyclesData()) >> (h)) & 0x01)
+      // если параметр отключен, перекрасить индикатор в красный
+      if (!(((channels[0].getMeasurementCyclesData()) >> (h)) & 0x01))
       {
-        x = (i == 0) ? CRGB::Orange : CRGB::DarkCyan;
+        x = CRGB::Red;
       }
       else
       {
-        x = CRGB::Red;
+        x = (i == 0) ? CRGB::Orange : CRGB::DarkCyan;
       }
       // текущий канал подмигивает с частотой 1 сек
       if (n >= 9)
       { // если отключено, то подмаргивать цветом канала (на случай, если отключены все, чтобы было понятно, что за настройка делается), иначе подмаргивать просто отключением
-        if (((channels[0].getMeasurementCyclesData()) >> (h)) & 0x01)
+        if (!(((channels[0].getMeasurementCyclesData()) >> (h)) & 0x01))
         {
-          x = CRGB::Black;
+          x = (i == 0) ? CRGB::Orange : CRGB::DarkCyan;
         }
         else
         {
-          x = (i == 0) ? CRGB::Orange : CRGB::DarkCyan;
+          x = CRGB::Black;
         }
       }
       if (++n > 9)
@@ -436,12 +438,10 @@ void setLeds_2(byte i)
     {
       if (i == 0)
       {
-        // x = (eeprom_read_byte(ss_eemems_0)) ? CRGB::Orange : CRGB::Red;
         x = (EEPROM.read(ss_eemems_0)) ? CRGB::Orange : CRGB::Red;
       }
       else
       {
-        // x = (eeprom_read_byte(ss_eemems_1)) ? CRGB::DarkCyan : CRGB::Red;
         x = (EEPROM.read(ss_eemems_1)) ? CRGB::DarkCyan : CRGB::Red;
       }
     }
@@ -578,6 +578,20 @@ void setLeds_4(byte i, bool reset = false)
 // подсветка индикаторов каналов при настройке включения/отключения датчиков влажности и каналов в целом
 void setLeds_7(byte i)
 {
+  CRGB cur_color = CRGB::Black;
+  switch (btn.getClickBtnCount())
+  {
+  case 1:
+    cur_color = CRGB::Cyan;
+    break;
+  case 7:
+    cur_color = CRGB::Blue;
+    break;
+  case 8:
+    cur_color = CRGB::Green;
+    break;
+  }
+
   // каналы подсвечивать синим (настройка датчиков), зеленым (настройка каналов) или красным (если датчик/канал отключен);
   if (i == curChannel)
   {
@@ -591,25 +605,12 @@ void setLeds_7(byte i)
       f = curChannel;
     }
 
-    if (channels[i].getMeasurementCyclesData())
-    {
-      leds[i + 1] = (btn.getClickBtnCount() == 8) ? CRGB::Green : CRGB::Blue;
-    }
-    else
-    {
-      leds[i + 1] = CRGB::Red;
-    }
+    leds[i + 1] = (channels[i].getMeasurementCyclesData()) ? cur_color : CRGB::Red;
+
     // текущий канал подмигивает с частотой 1 сек
     if (n >= 9)
     { // если отключено, то подмаргивать цветом канала (на случай, если отключены все, чтобы было понятно, что за настройка делается), иначе подмаргивать просто отключением
-      if (channels[i].getMeasurementCyclesData())
-      {
-        leds[i + 1] = CRGB::Black;
-      }
-      else
-      {
-        leds[i + 1] = (btn.getClickBtnCount() == 8) ? CRGB::Green : CRGB::Blue;
-      }
+      leds[i + 1] = (channels[i].getMeasurementCyclesData()) ? CRGB::Black : cur_color;
     }
     if (++n > 9)
     {
@@ -618,15 +619,7 @@ void setLeds_7(byte i)
   }
   else
   {
-    switch (btn.getClickBtnCount())
-    {
-    case 7:
-      leds[i + 1] = (channels[i].getSensorOnOffState()) ? CRGB::Blue : CRGB::Red;
-      break;
-    case 8:
-      leds[i + 1] = (channels[i].getChannelOnOffState()) ? CRGB::Green : CRGB::Red;
-      break;
-    }
+    leds[i + 1] = (channels[i].getMeasurementCyclesData()) ? cur_color : CRGB::Red;
   }
 }
 
@@ -691,6 +684,7 @@ void setLeds()
       case 6:
         setLeds_4(i);
         break;
+      case 1:
       case 7:
       case 8:
         setLeds_7(i);
@@ -729,7 +723,6 @@ void runErrorBuzzer()
 
   if (pgm_read_dword(&pick[0][n]) > 0)
   {
-    // if (eeprom_read_byte(ss_eemems_1))
     if (EEPROM.read(ss_eemems_1))
     { // пищалка срабатывает если только это разрешено в настройках; проблескивание белым будет в любом случае
       tone(BUZZER_PIN, pgm_read_dword(&pick[0][n]), pgm_read_dword(&pick[1][n]));
@@ -788,7 +781,7 @@ void runSetBuzzer()
   }
   else
   { // если только что включен режим настройки, то дать серию коротких пиков в зависимости от режима
-    if ((btn.getClickBtnCount() >= 2) && (btn.getClickBtnCount() <= 8))
+    if ((btn.getClickBtnCount() >= 1) && (btn.getClickBtnCount() <= 8))
     {
       tone(BUZZER_PIN, pgm_read_dword(&pick[0][n]), pgm_read_dword(&pick[1][n]));
       tasks.setTaskInterval(set_buzzer_on, pgm_read_dword(&pick[1][n]), true);
@@ -933,11 +926,9 @@ void getCurrentData()
   case 2:
     byte x;
     x = 0;
-    // (eeprom_read_byte(ss_eemems_0)) ? x |= (1 << (0)) : x &= ~(1 << (0));
-    // (eeprom_read_byte(ss_eemems_1)) ? x |= (1 << (1)) : x &= ~(1 << (1));
     (EEPROM.read(ss_eemems_0)) ? x |= (1 << (0)) : x &= ~(1 << (0));
     (EEPROM.read(ss_eemems_1)) ? x |= (1 << (1)) : x &= ~(1 << (1));
-    channels[curChannel].setMeasurementCyclesData(x);
+    channels[0].setMeasurementCyclesData(x);
     break;
   case 4:
     channels[curChannel].setMeasurementCyclesData(channels[curChannel].getHumadityTreshold() / 100 - 3);
@@ -948,11 +939,24 @@ void getCurrentData()
   case 6:
     channels[curChannel].setMeasurementCyclesData(channels[curChannel].getMaxDay());
     break;
+  case 1:
   case 7:
-    channels[curChannel].setMeasurementCyclesData(channels[curChannel].getSensorOnOffState());
-    break;
   case 8:
-    channels[curChannel].setMeasurementCyclesData(channels[curChannel].getChannelOnOffState());
+    for (byte i = 0; i < CHANNEL_COUNT; i++)
+    {
+      switch (btn.getClickBtnCount())
+      {
+      case 1:
+        channels[i].setMeasurementCyclesData(channels[i].getSixHourCycles());
+        break;
+      case 7:
+        channels[i].setMeasurementCyclesData(channels[i].getSensorOnOffState());
+        break;
+      case 8:
+        channels[i].setMeasurementCyclesData(channels[i].getChannelOnOffState());
+        break;
+      }
+    }
     break;
   }
 }
@@ -1017,10 +1021,16 @@ void runSetChannels()
       case 6:
         isBtnClosed_4();
         break;
+      case 1:
       case 7:
       case 8:
         tone(BUZZER_PIN, 2500, 100ul);
         channels[curChannel].setMeasurementCyclesData(!channels[curChannel].getMeasurementCyclesData());
+        // для сброса счетчика дней при уже нулевом счетчике индикатор всегда должен быть красным
+        if ((btn.getClickBtnCount() == 1 && channels[curChannel].getMeasurementCyclesData()))
+        {
+          channels[curChannel].setMeasurementCyclesData(channels[curChannel].getSixHourCycles());
+        }
         channels[curChannel].setSettingData(FL_STOP_DATA);
         break;
       }
@@ -1052,15 +1062,19 @@ void runSetChannels()
     {
       switch (btn.getClickBtnCount())
       {
+      case 1:
+        if (!channels[curChannel].getMeasurementCyclesData())
+        {
+          channels[curChannel].clearSixHourCycles();
+        }
+        break;
       case 2:
         if (curChannel == 0)
         {
-          // eeprom_update_byte(ss_eemems_0, (((channels[0].getMeasurementCyclesData()) >> (0)) & 0x01));
           EEPROM.update(ss_eemems_0, (((channels[0].getMeasurementCyclesData()) >> (0)) & 0x01));
         }
         else
         {
-          // eeprom_update_byte(ss_eemems_1, (((channels[0].getMeasurementCyclesData()) >> (1)) & 0x01));
           EEPROM.update(ss_eemems_1, (((channels[0].getMeasurementCyclesData()) >> (1)) & 0x01));
         }
         break;
@@ -1162,6 +1176,10 @@ void manualWateringRun()
   else
   {
     tasks.restartTask(return_to_def_mode);
+    if (channels[curChannel].getSixHourCycles() > 0)
+    {
+      channels[curChannel].clearSixHourCycles();
+    }
   }
 }
 // ===================================================
@@ -1289,6 +1307,9 @@ void btnLongClick(byte &n)
         case 4:
           n = 200;
           break;
+        case 5:
+          n = 100;
+          break;
         default:
           n = 0;
           break;
@@ -1344,9 +1365,9 @@ void checkButton()
   // проверить, сколько одиночных кликов кнопки сделано
   if ((btn.getClickBtnCount() == 0) && !tasks.getTaskState(run_channel))
   {
-    if (n == 200)
+    if (n == 200 || n == 100)
     {
-      btn.setClickBtnCount(2);
+      btn.setClickBtnCount(n / 100);
       n = 0;
     }
     else if (millis() - btn_timer > 1000)
@@ -1371,8 +1392,6 @@ void verifyEEPROM()
   { // настройки использования датчика света и пищалки при ошибках
     // обозначить звуковым сигналом сброс настроек
     tone(BUZZER_PIN, 2000, 1000ul);
-    // eeprom_update_byte(ss_eemems_0, 1);
-    // eeprom_update_byte(ss_eemems_1, 1);
     EEPROM.update(ss_eemems_0, 1);
     EEPROM.update(ss_eemems_1, 1);
     for (byte i = 0; i < CHANNEL_COUNT; i++)
@@ -1388,6 +1407,7 @@ void setup()
   Serial.begin(9600);
 #endif
 
+  // ==== индикаторы =================================
   FastLED.addLeds<WS2812B, LEDS_PIN, GRB>(leds, CHANNEL_COUNT + 1);
   FastLED.setBrightness(5);
 
@@ -1415,7 +1435,7 @@ void loop()
 {
   tasks.tick();
   checkButton();
-  if ((btn.getClickBtnCount() >= 2) &&
+  if ((btn.getClickBtnCount() >= 1) &&
       (btn.getClickBtnCount() <= 8) &&
       !tasks.getTaskState(run_set_channels))
   {
@@ -1470,8 +1490,7 @@ void checkSerial()
       Serial.println(F("=== Sensors state ==="));
       Serial.println();
       // показания датчика света
-      Serial.print(F("Light sensor "));
-      // if (!eeprom_read_byte(ss_eemems_0))
+      Serial.print(F("Light sensor: "));
       if (!EEPROM.read(ss_eemems_0))
       {
         Serial.println(F(" not used"));
@@ -1486,8 +1505,7 @@ void checkSerial()
       Serial.print(F("Water sensor data: "));
       digitalRead(WATER_LEVEL_SENSOR_PIN) ? Serial.println(F("yes")) : Serial.println(F("no"));
       // использование пищалки в сообщениях об ошибках
-      Serial.print(F("Error buzzer "));
-      // if (!eeprom_read_byte(ss_eemems_1))
+      Serial.print(F("Error buzzer: "));
       if (!EEPROM.read(ss_eemems_1))
       {
         Serial.println(F(" not used"));
@@ -1549,11 +1567,11 @@ void printChannelStatus(byte cnl)
   Serial.print(cnl + 1);
   if (!channels[cnl].getChannelOnOffState())
   {
-    Serial.println(F(" not used"));
+    Serial.println(F(": not used"));
   }
   else
   {
-    Serial.println(F(" used"));
+    Serial.println(F(": used"));
     Serial.print(F("Channel state: "));
     switch (channels[cnl].getChannelState())
     {

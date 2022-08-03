@@ -804,21 +804,12 @@ void runSetBuzzer()
   }
 }
 
-void _wateringBuzzer(byte index)
+void runWateringBuzzer(bool toUp)
 {
   // "мелодия" пищалки: первая строка - частота, вторая строка - длительность
   static const PROGMEM uint32_t pick[2][5] = {
       {2000, 0, 2250, 0, 2500},
       {50, 100, 50, 100, 50}};
-  if (index < 6)
-  {
-    tone(BUZZER_PIN, pgm_read_dword(&pick[0][index]), pgm_read_dword(&pick[1][index]));
-    tasks.setTaskInterval(watering_buzzer_on, pgm_read_dword(&pick[1][index]), true);
-  }
-}
-
-void runWateringBuzzer(bool toUp)
-{
   static byte n = 0;
   static bool _toUp = true;
 
@@ -832,10 +823,12 @@ void runWateringBuzzer(bool toUp)
     n = (_toUp) ? 0 : 4;
     tasks.startTask(watering_buzzer_on);
   }
-  _wateringBuzzer(n);
+  
+  tone(BUZZER_PIN, pgm_read_dword(&pick[0][n]), pgm_read_dword(&pick[1][n]));
+  tasks.setTaskInterval(watering_buzzer_on, pgm_read_dword(&pick[1][n]), true);
 
   (_toUp) ? n++ : n--;
-  if (n >= 5)
+  if (n > 4)
   {
     _toUp = true;
     tasks.stopTask(watering_buzzer_on);
@@ -1479,6 +1472,8 @@ void checkSerial()
       Serial.println(tasks.getTaskState(rescan_start));
       Serial.print(F("set_buzzer_on: "));
       Serial.println(tasks.getTaskState(set_buzzer_on));
+      Serial.print(F("watering_buzzer_on: "));
+      Serial.println(tasks.getTaskState(watering_buzzer_on));
       Serial.print(F("run_set_channels: "));
       Serial.println(tasks.getTaskState(run_set_channels));
       Serial.print(F("return_to_def_mode: "));

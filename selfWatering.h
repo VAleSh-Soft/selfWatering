@@ -51,7 +51,7 @@
 #if (CHANNEL_COUNT > 3)
 #define HPOWER_4_SENSOR_PIN 11   // пин питания четвертого датчика влажности
 #define HUMIDITY_4_SENSOR_PIN A3 // пин данных четвертого датчика влажности
-#define PUMP_4_PIN 12            // пин управления четвертой помпой
+#define PUMP_4_PIN 13            // пин управления четвертой помпой
 #endif
 
 #if (CHANNEL_COUNT == 5)

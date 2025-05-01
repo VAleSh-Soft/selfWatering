@@ -823,7 +823,7 @@ void runWateringBuzzer(bool toUp)
     n = (_toUp) ? 0 : 4;
     tasks.startTask(watering_buzzer_on);
   }
-  
+
   tone(BUZZER_PIN, pgm_read_dword(&pick[0][n]), pgm_read_dword(&pick[1][n]));
   tasks.setTaskInterval(watering_buzzer_on, pgm_read_dword(&pick[1][n]), true);
 
@@ -1590,7 +1590,8 @@ void printChannelStatus(byte cnl)
       break;
     }
     Serial.print(F("Pump state: ")); // текущий статус помпы
-    (channels[cnl].getPumpState()) ? Serial.println(F("power ON")) : Serial.println(F("power OFF"));
+    (channels[cnl].getPumpState()) ? Serial.println(F("power ON"))
+                                   : Serial.println(F("power OFF"));
     Serial.print(F("Pump timeout, sec: ")); // время работы помпы для канала
     Serial.print(channels[cnl].getPumpData() / 1000);
     Serial.print(F("."));

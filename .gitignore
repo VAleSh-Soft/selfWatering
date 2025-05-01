@@ -4,3 +4,4 @@ _build/*
 *.vsd
 docs/~*
 docs/manual.doc
+bin/*
